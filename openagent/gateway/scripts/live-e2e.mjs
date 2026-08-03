@@ -13,7 +13,7 @@ const mailScopes = [
   'contacts:read', 'contacts:write', 'files:read', 'files:write',
 ];
 const jmapCapabilities = [
-  'urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail',
+  'urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:blob', 'urn:ietf:params:jmap:mail',
   'urn:ietf:params:jmap:submission', 'urn:ietf:params:jmap:contacts',
   'urn:ietf:params:jmap:calendars', 'urn:ietf:params:jmap:filenode',
 ];
@@ -51,6 +51,14 @@ async function main() {
   });
   checkpoint('collaboration.created', { addressBookId, calendarId, fileNodeId });
 
+  const artifacts = await createCollaborationArtifacts(senderSession, sender.token, {
+    addressBookId,
+    calendarId,
+    fileNodeId,
+    suffix,
+  });
+  checkpoint('collaboration.content.created', artifacts);
+
   await assertAccountIsolation(recipientSession, recipient.token, senderAccountId, calendarId);
   checkpoint('accounts.isolated', { recipientCannotReadSenderCalendar: true });
 
@@ -61,7 +69,10 @@ async function main() {
 
   console.log(JSON.stringify({
     agents: [publicAgent(sender), publicAgent(recipient)], result: 'pass',
-    verified: ['identity', 'mailbox', 'jmap', 'calendar', 'contacts', 'files', 'isolation', 'smtp'],
+    verified: [
+      'identity', 'mailbox', 'jmap', 'calendar', 'calendar-event', 'contacts',
+      'contact-card', 'files', 'file-content', 'isolation', 'smtp',
+    ],
   }));
   } catch (error) {
     console.error(JSON.stringify({ result: 'fail', message: compactError(error) }));
@@ -190,6 +201,79 @@ async function createObject(session, token, type, object) {
   const created = result.created?.live;
   if (!created?.id) throw new Error(`${type}/set did not create object: ${errorSummary(result.notCreated)}`);
   return created.id;
+}
+
+async function createCollaborationArtifacts(session, token, ids) {
+  const eventId = await createObject(session, token, 'CalendarEvent', {
+    '@type': 'Event',
+    calendarIds: { [ids.calendarId]: true },
+    duration: 'PT30M',
+    start: '2030-01-02T10:00:00',
+    timeZone: 'UTC',
+    title: 'OpenAgent live E2E event',
+    uid: `openagent-${ids.suffix}@agents.openagent.md`,
+    updated: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'),
+  });
+  const contactId = await createObject(session, token, 'ContactCard', {
+    '@type': 'Card',
+    addressBookIds: { [ids.addressBookId]: true },
+    emails: {
+      work: { address: 'service@openagent.md', contexts: { work: true } },
+    },
+    name: { full: 'OpenAgent Service' },
+    uid: `urn:uuid:${randomUUID()}`,
+  });
+  const file = await createFile(session, token, ids.fileNodeId);
+
+  await assertObjectExists(session, token, 'CalendarEvent', eventId);
+  await assertObjectExists(session, token, 'ContactCard', contactId);
+  await assertObjectExists(session, token, 'FileNode', file.fileId);
+  const blob = await jmapCall(session, token, [
+    'Blob/get',
+    { accountId: primaryAccountId(session), ids: [file.blobId], properties: ['data:asText'] },
+    'verify-file-content',
+  ]);
+  assert(blob.list?.[0]?.['data:asText'] === 'OpenAgent file content', 'uploaded file content mismatch');
+  return { contactId, eventId, fileId: file.fileId };
+}
+
+async function createFile(session, token, parentId) {
+  const accountId = primaryAccountId(session);
+  const response = await jmapRaw(session, token, [
+    [
+      'Blob/upload',
+      { accountId, create: { content: { data: [{ 'data:asText': 'OpenAgent file content' }] } } },
+      'upload-file-content',
+    ],
+    [
+      'FileNode/set',
+      {
+        accountId,
+        create: {
+          file: {
+            blobId: '#content',
+            name: 'openagent-e2e.txt',
+            parentId,
+            type: 'text/plain',
+          },
+        },
+      },
+      'create-file-node',
+    ],
+  ]);
+  const uploaded = response.methodResponses?.[0]?.[1]?.created?.content;
+  const created = response.methodResponses?.[1]?.[1]?.created?.file;
+  if (!uploaded?.id || !created?.id) {
+    throw new Error(`file creation failed: ${JSON.stringify(response.methodResponses).slice(0, 800)}`);
+  }
+  return { blobId: uploaded.id, fileId: created.id };
+}
+
+async function assertObjectExists(session, token, type, id) {
+  const result = await jmapCall(session, token, [
+    `${type}/get`, { accountId: primaryAccountId(session), ids: [id] }, `verify-${type}`,
+  ]);
+  assert(result.list?.some((entry) => entry.id === id), `${type} ${id} was not persisted`);
 }
 
 async function assertAccountIsolation(session, token, foreignAccountId, calendarId) {

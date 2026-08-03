@@ -75,7 +75,8 @@ is never returned to an agent and must live in a secret manager in production.
 
 `openagent/gateway/scripts/live-e2e.mjs` creates two real agent identities and
 credentials through the Identity management API. It provisions both accounts,
-creates a calendar, address book, and file folder, verifies that the second
-agent cannot read the first agent's calendar, sends a message from the first
-agent using SMTP submission with OAUTHBEARER, and polls the second agent's JMAP
-inbox for delivery. This test uses no fixture accounts or protocol mocks.
+creates a calendar event and contact card, uploads and reads back a file,
+verifies that the second agent cannot read the first agent's calendar, sends a
+message from the first agent using SMTP submission with OAUTHBEARER, and polls
+the second agent's JMAP inbox for delivery. This test uses no fixture accounts
+or protocol mocks.

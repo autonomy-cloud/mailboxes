@@ -55,9 +55,10 @@ OPENAGENT_LIVE_MANAGEMENT_TOKEN='<management-api-token>' npm run test:live
 ```
 
 The script creates two temporary agents with distinct Ed25519 credentials and
-verifies provisioning, JMAP discovery, calendar, contacts, files, cross-account
-isolation, SMTP OAUTHBEARER authentication, and inbox delivery. A successful
-run ends with `"result":"pass"`. It does not use mock identities or mock mail.
+verifies provisioning, JMAP discovery, a persisted calendar event, a persisted
+contact card, uploaded and read-back file content, cross-account isolation,
+SMTP OAUTHBEARER authentication, and inbox delivery. A successful run ends with
+`"result":"pass"`. It does not use mock identities or mock mail.
 
 ## Production boundary
 
