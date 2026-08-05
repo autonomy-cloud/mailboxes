@@ -39,6 +39,19 @@ export class StalwartClient {
     }
   }
 
+  async ensureBearerAccess(token: string): Promise<void> {
+    if (await this.#hasBearerAccess(token)) return;
+
+    const session = await this.#session();
+    const adminAccountId = primaryAccountId(session);
+    await this.#reloadSettings(session.apiUrl, adminAccountId);
+    await this.#invalidateCaches(session.apiUrl, adminAccountId);
+
+    if (!(await this.#hasBearerAccess(token))) {
+      throw new Error('Stalwart rejected the provisioned agent bearer token');
+    }
+  }
+
   async bootstrapIfNeeded(): Promise<boolean> {
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
@@ -51,7 +64,7 @@ export class StalwartClient {
     const update = {
       serverHostname: this.#config.stalwartServerHostname,
       defaultDomain: this.#config.mailDomain,
-      requestTlsCertificate: false,
+      requestTlsCertificate: this.#config.stalwartRequestTlsCertificate,
       generateDkimKeys: true,
       dataStore: bootstrap.dataStore,
       blobStore: bootstrap.blobStore,
@@ -303,6 +316,21 @@ export class StalwartClient {
       throw new Error('Stalwart returned an invalid JMAP session');
     }
     return body as JmapSession;
+  }
+
+  async #hasBearerAccess(token: string): Promise<boolean> {
+    try {
+      const response = await this.#fetch(
+        `${this.#config.stalwartBaseUrl}/.well-known/jmap`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   async #call(

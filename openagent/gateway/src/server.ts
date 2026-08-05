@@ -46,6 +46,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     }
 
     const mailbox = await stalwart.ensureMailbox(identity.agentEmail, identity.agentName);
+    await stalwart.ensureBearerAccess(token);
     console.info(JSON.stringify({
       level: 'info',
       event: 'mailbox.ensure',
@@ -58,13 +59,13 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       ...mailbox,
       jmapSessionUrl: `${config.stalwartPublicUrl}/.well-known/jmap`,
       smtpSubmission: {
-        host: new URL(config.stalwartPublicUrl).hostname,
-        port: 6487,
+        host: config.stalwartMailHost,
+        port: config.stalwartSmtpSubmissionPort,
         tls: 'implicit',
       },
       imap: {
-        host: new URL(config.stalwartPublicUrl).hostname,
-        port: 6493,
+        host: config.stalwartMailHost,
+        port: config.stalwartImapPort,
         tls: 'implicit',
       },
     });
@@ -108,6 +109,11 @@ if (config.stalwartConfigureOpenAgentOidc) {
     issuer: config.identityIssuer,
     audience: config.mailAudience,
   }));
+}
+
+if (config.bootstrapOnly) {
+  console.info(JSON.stringify({ level: 'info', event: 'bootstrap.completed' }));
+  process.exit(0);
 }
 
 server.listen(config.port, '0.0.0.0', () => {

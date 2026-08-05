@@ -11,11 +11,16 @@ const environmentSchema = z.object({
   OPENAGENT_REQUIRED_SCOPES: z.string().default('mail:read'),
   STALWART_BASE_URL: url,
   STALWART_PUBLIC_URL: url,
+  STALWART_MAIL_HOST: z.string().trim().min(3),
+  STALWART_SMTP_SUBMISSION_PORT: z.coerce.number().int().min(1).max(65535).default(465),
+  STALWART_IMAP_PORT: z.coerce.number().int().min(1).max(65535).default(993),
   STALWART_ADMIN_USERNAME: z.string().min(1),
   STALWART_ADMIN_PASSWORD: z.string().min(12),
   STALWART_SERVER_HOSTNAME: z.string().trim().min(3).default('mail.openagent.md'),
+  STALWART_REQUEST_TLS_CERTIFICATE: z.enum(['true', 'false']).default('false'),
   STALWART_AUTO_BOOTSTRAP: z.enum(['true', 'false']).default('false'),
   STALWART_CONFIGURE_OPENAGENT_OIDC: z.enum(['true', 'false']).default('false'),
+  OPENAGENT_BOOTSTRAP_ONLY: z.enum(['true', 'false']).default('false'),
 });
 
 export type GatewayConfig = {
@@ -27,11 +32,16 @@ export type GatewayConfig = {
   requiredScopes: readonly string[];
   stalwartBaseUrl: string;
   stalwartPublicUrl: string;
+  stalwartMailHost: string;
+  stalwartSmtpSubmissionPort: number;
+  stalwartImapPort: number;
   stalwartAdminUsername: string;
   stalwartAdminPassword: string;
   stalwartServerHostname: string;
+  stalwartRequestTlsCertificate: boolean;
   stalwartAutoBootstrap: boolean;
   stalwartConfigureOpenAgentOidc: boolean;
+  bootstrapOnly: boolean;
 };
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): GatewayConfig {
@@ -51,10 +61,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Gatewa
     requiredScopes,
     stalwartBaseUrl: parsed.STALWART_BASE_URL,
     stalwartPublicUrl: parsed.STALWART_PUBLIC_URL,
+    stalwartMailHost: parsed.STALWART_MAIL_HOST.toLowerCase(),
+    stalwartSmtpSubmissionPort: parsed.STALWART_SMTP_SUBMISSION_PORT,
+    stalwartImapPort: parsed.STALWART_IMAP_PORT,
     stalwartAdminUsername: parsed.STALWART_ADMIN_USERNAME,
     stalwartAdminPassword: parsed.STALWART_ADMIN_PASSWORD,
     stalwartServerHostname: parsed.STALWART_SERVER_HOSTNAME.toLowerCase(),
+    stalwartRequestTlsCertificate: parsed.STALWART_REQUEST_TLS_CERTIFICATE === 'true',
     stalwartAutoBootstrap: parsed.STALWART_AUTO_BOOTSTRAP === 'true',
     stalwartConfigureOpenAgentOidc: parsed.STALWART_CONFIGURE_OPENAGENT_OIDC === 'true',
+    bootstrapOnly: parsed.OPENAGENT_BOOTSTRAP_ONLY === 'true',
   };
 }

@@ -62,6 +62,8 @@ is never returned to an agent and must live in a secret manager in production.
 
 ## Production requirements
 
+- Make Stalwart the only MX destination for `agents.openagent.md`; forwarding-only email routing
+  cannot coexist with persistent inbox delivery on the same subdomain.
 - Use an HTTPS Identity issuer and HTTPS public Stalwart endpoints.
 - Store the gateway administrator credential in a secret manager.
 - Remove `STALWART_RECOVERY_ADMIN` after bootstrapping a permanent admin.

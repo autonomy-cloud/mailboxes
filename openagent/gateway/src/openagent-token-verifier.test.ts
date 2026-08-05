@@ -11,12 +11,17 @@ const config: GatewayConfig = {
   mailDomain: 'agents.openagent.md',
   requiredScopes: ['mail:read'],
   stalwartBaseUrl: 'http://stalwart:8080',
-  stalwartPublicUrl: 'https://mail.openagent.md',
+  stalwartPublicUrl: 'https://inbox.openagent.md',
+  stalwartMailHost: 'mail.openagent.md',
+  stalwartSmtpSubmissionPort: 465,
+  stalwartImapPort: 993,
   stalwartAdminUsername: 'admin',
   stalwartAdminPassword: 'a-long-test-password',
   stalwartServerHostname: 'mail.openagent.md',
+  stalwartRequestTlsCertificate: false,
   stalwartAutoBootstrap: false,
   stalwartConfigureOpenAgentOidc: false,
+  bootstrapOnly: false,
 };
 
 function validClaims() {

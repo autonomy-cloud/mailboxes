@@ -1,0 +1,52 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: mailbox-gateway }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: mailbox-gateway }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+      ports: [{ protocol: TCP, port: 6402 }]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: stalwart }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: stalwart }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: stalwart }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: mailbox-gateway }
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: mailbox-bootstrap }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 25 }
+        - { protocol: TCP, port: 465 }
+        - { protocol: TCP, port: 993 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - ports:
+        - { protocol: TCP, port: 25 }
+        - { protocol: TCP, port: 443 }

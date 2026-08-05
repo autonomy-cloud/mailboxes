@@ -67,3 +67,6 @@ Internet-reachable mail deployment. Production additionally requires public
 DNS and MX, SPF, DKIM, DMARC, MTA-STS/TLS-RPT, trusted TLS certificates,
 durable object/database storage, backups with restore tests, rate limits,
 monitoring, and secret-manager delivery of the recovery credential.
+
+The digest-pinned Kubernetes packaging and rollout procedure live in
+`deploy/openagent-mailboxes` and `docs/openagent/production.md`.
