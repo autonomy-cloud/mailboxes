@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openagent-mailboxes-bootstrap
+spec:
+  backoffLimit: 12
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mailbox-bootstrap
+        app.kubernetes.io/component: bootstrap
+        app.kubernetes.io/part-of: openagent
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: openagent-mailboxes
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: bootstrap
+          image: openagent-mailbox-gateway
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: openagent-mailboxes }
+          env:
+            - { name: STALWART_AUTO_BOOTSTRAP, value: "true" }
+            - { name: STALWART_CONFIGURE_OPENAGENT_OIDC, value: "true" }
+            - { name: OPENAGENT_BOOTSTRAP_ONLY, value: "true" }
+            - name: STALWART_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef: { name: openagent-mailboxes-secrets, key: admin-username }
+            - name: STALWART_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: openagent-mailboxes-secrets, key: admin-password }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

@@ -1,0 +1,36 @@
+name: Promotion source
+
+on:
+  pull_request:
+    branches: [stage, release]
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-source:
+    name: promotion-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the preceding same-repository branch
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "${BASE}" in
+            stage) expected=develop ;;
+            release) expected=stage ;;
+            *) exit 1 ;;
+          esac
+          test "${HEAD_REPO}" = "${THIS_REPO}" || {
+            echo "::error::Promotions must originate in ${THIS_REPO}."
+            exit 1
+          }
+          test "${HEAD}" = "${expected}" || {
+            echo "::error::${BASE} may only be promoted from ${expected}."
+            exit 1
+          }

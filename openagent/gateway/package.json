@@ -1,0 +1,24 @@
+{
+  "name": "@autonomy-cloud/openagent-mailbox-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run src",
+    "test:live": "node scripts/live-e2e.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "jose": "^6.1.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.16"
+  }
+}

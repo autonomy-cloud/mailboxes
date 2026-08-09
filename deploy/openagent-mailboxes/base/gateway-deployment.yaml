@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailbox-gateway
+  labels: &labels
+    app.kubernetes.io/name: mailbox-gateway
+    app.kubernetes.io/component: control-plane
+    app.kubernetes.io/part-of: openagent
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: openagent-mailboxes
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: openagent-mailbox-gateway
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: openagent-mailboxes }
+          env:
+            - name: STALWART_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef: { name: openagent-mailboxes-secrets, key: admin-username }
+            - name: STALWART_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: openagent-mailboxes-secrets, key: admin-password }
+          ports:
+            - { name: http, containerPort: 6402 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /health/live, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: temporary, mountPath: /tmp }
+      volumes:
+        - name: temporary
+          emptyDir: { sizeLimit: 128Mi }

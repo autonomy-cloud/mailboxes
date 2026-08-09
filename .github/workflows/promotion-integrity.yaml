@@ -1,0 +1,27 @@
+name: Promotion integrity
+
+on:
+  push:
+    branches: [stage, release]
+
+permissions:
+  contents: read
+
+jobs:
+  promotion-integrity:
+    name: promotion-integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require a merge commit
+        run: |
+          set -euo pipefail
+          parent_count="$(git rev-list --parents -n1 HEAD | awk '{print NF - 1}')"
+          test "${parent_count}" -ge 2 || {
+            echo "::error::${GITHUB_REF_NAME} must advance by merge commit, not squash or rebase."
+            exit 1
+          }

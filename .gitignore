@@ -1,0 +1,13 @@
+/target
+*.failed
+*_failed
+run.sh
+.*
+!.gitignore
+!.gitattributes
+!.github
+CLAUDE.md
+node_modules/
+dist/
+openagent/.env
+!openagent/.env.example

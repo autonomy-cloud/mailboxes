@@ -1,0 +1,55 @@
+FROM --platform=$BUILDPLATFORM docker.io/lukemathwalker/cargo-chef:latest-rust-slim-trixie@sha256:d1f5e967fcecfdff94f3e71db056079f40cbced4e08f73cdf22bab2fe3da3efd AS chef
+WORKDIR /build
+
+FROM --platform=$BUILDPLATFORM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM --platform=$BUILDPLATFORM chef AS builder
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ENV CARGO_BUILD_JOBS=2 \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    CARGO_PROFILE_RELEASE_LTO=false
+RUN case "${TARGETPLATFORM}" in \
+    "linux/arm64") echo "aarch64-unknown-linux-gnu" > /target.txt && echo "-C linker=aarch64-linux-gnu-gcc" > /flags.txt ;; \
+    "linux/amd64") echo "x86_64-unknown-linux-gnu" > /target.txt && echo "-C linker=x86_64-linux-gnu-gcc" > /flags.txt ;; \
+    *) exit 1 ;; \
+    esac
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -yq --no-install-recommends build-essential libclang-19-dev \
+    g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+    g++-x86-64-linux-gnu binutils-x86-64-linux-gnu
+RUN rustup target add "$(cat /target.txt)"
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,id=openagent-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=openagent-cargo-target-${TARGETARCH},target=/build/target,sharing=locked \
+    RUSTFLAGS="$(cat /flags.txt)" cargo chef cook --target "$(cat /target.txt)" \
+    --release --no-default-features --features "sqlite postgres mysql rocks s3 redis azure nats" \
+    --recipe-path /recipe.json
+COPY . .
+RUN --mount=type=cache,id=openagent-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=openagent-cargo-target-${TARGETARCH},target=/build/target,sharing=locked \
+    RUSTFLAGS="$(cat /flags.txt)" cargo build --target "$(cat /target.txt)" \
+    --release -p stalwart --no-default-features \
+    --features "sqlite postgres mysql rocks s3 redis azure nats" && \
+    mv "/build/target/$(cat /target.txt)/release/stalwart" /stalwart
+
+FROM docker.io/debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -yq --no-install-recommends ca-certificates curl libcap2-bin && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -r -g 2000 stalwart && \
+    useradd -r -u 2000 -g 2000 -s /usr/sbin/nologin -M stalwart && \
+    mkdir -p /etc/stalwart /var/lib/stalwart && \
+    chown stalwart:stalwart /etc/stalwart /var/lib/stalwart
+COPY --from=builder --chmod=0755 /stalwart /usr/local/bin/stalwart
+COPY --chmod=0755 openagent/stalwart-entrypoint.sh /opt/openagent/stalwart-entrypoint.sh
+RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/stalwart
+USER stalwart
+WORKDIR /var/lib/stalwart
+VOLUME ["/etc/stalwart", "/var/lib/stalwart"]
+EXPOSE 443 25 110 587 465 143 993 995 4190 8080
+ENTRYPOINT ["/opt/openagent/stalwart-entrypoint.sh"]
