@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openagent-mailboxes
+data:
+  PORT: "6402"
+  OPENAGENT_IDENTITY_ISSUER: https://id.openagent.md/oidc
+  OPENAGENT_IDENTITY_JWKS_URL: https://id.openagent.md/oidc/jwks
+  OPENAGENT_MAIL_AUDIENCE: https://mail.openagent.md
+  OPENAGENT_MAIL_DOMAIN: agents.openagent.md
+  OPENAGENT_REQUIRED_SCOPES: mail:read
+  STALWART_BASE_URL: http://stalwart:8080
+  STALWART_PUBLIC_URL: https://inbox.openagent.md
+  STALWART_MAIL_HOST: mail.openagent.md
+  STALWART_SMTP_SUBMISSION_PORT: "465"
+  STALWART_IMAP_PORT: "993"
+  STALWART_SERVER_HOSTNAME: mail.openagent.md
+  STALWART_REQUEST_TLS_CERTIFICATE: "true"
+  STALWART_AUTO_BOOTSTRAP: "false"
+  STALWART_CONFIGURE_OPENAGENT_OIDC: "false"
+  OPENAGENT_BOOTSTRAP_ONLY: "false"

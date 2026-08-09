@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openagent-mailboxes
+resources:
+  - namespace.yaml
+  - service-account.yaml
+  - config-map.yaml
+  - stalwart-stateful-set.yaml
+  - stalwart-service.yaml
+  - gateway-deployment.yaml
+  - gateway-service.yaml
+  - bootstrap-job.yaml
+  - ingress.yaml
+  - pod-disruption-budget.yaml
+  - network-policy.yaml
+images:
+  - name: openagent-stalwart
+    newName: ghcr.io/autonomy-cloud/mailboxes-stalwart
+    newTag: SET_BY_RELEASE_PIPELINE
+  - name: openagent-mailbox-gateway
+    newName: ghcr.io/autonomy-cloud/openagent-mailbox-gateway
+    newTag: SET_BY_RELEASE_PIPELINE

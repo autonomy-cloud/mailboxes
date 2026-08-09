@@ -7,3 +7,7 @@ run.sh
 !.gitattributes
 !.github
 CLAUDE.md
+node_modules/
+dist/
+openagent/.env
+!openagent/.env.example

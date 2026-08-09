@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: stalwart
+spec:
+  selector:
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/component: mail-data-plane
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stalwart-mail
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: mail.openagent.md
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/component: mail-data-plane
+  ports:
+    - { name: https, port: 443, targetPort: https }
+    - { name: smtp, port: 25, targetPort: smtp }
+    - { name: submissions, port: 465, targetPort: submissions }
+    - { name: imaps, port: 993, targetPort: imaps }
