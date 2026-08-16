@@ -4,10 +4,10 @@ name: trivy
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches: [ "release" ]
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ "main" ]
+    branches: [ "release" ]
   schedule:
     - cron: '00 12 * * *'
 
