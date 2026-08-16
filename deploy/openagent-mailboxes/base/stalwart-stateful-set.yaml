@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: stalwart
+  labels: &labels
+    app.kubernetes.io/name: stalwart
+    app.kubernetes.io/component: mail-data-plane
+    app.kubernetes.io/part-of: openagent
+spec:
+  serviceName: stalwart
+  replicas: 1
+  selector:
+    matchLabels: *labels
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      serviceAccountName: openagent-mailboxes
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: stalwart
+          image: openagent-stalwart
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: STALWART_RECOVERY_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: openagent-mailboxes-secrets
+                  key: recovery-admin
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: https, containerPort: 443 }
+            - { name: smtp, containerPort: 25 }
+            - { name: submissions, containerPort: 465 }
+            - { name: imaps, containerPort: 993 }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "4", memory: 4Gi }
+          startupProbe:
+            httpGet:
+              path: /healthz/live
+              port: http
+              httpHeaders:
+                - { name: X-Forwarded-For, value: 127.0.0.1 }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: http
+              httpHeaders:
+                - { name: X-Forwarded-For, value: 127.0.0.1 }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: http
+              httpHeaders:
+                - { name: X-Forwarded-For, value: 127.0.0.1 }
+            periodSeconds: 20
+            timeoutSeconds: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          volumeMounts:
+            - { name: config, mountPath: /etc/stalwart }
+            - { name: data, mountPath: /var/lib/stalwart }
+            - { name: temporary, mountPath: /tmp }
+      volumes:
+        - name: temporary
+          emptyDir: { sizeLimit: 512Mi }
+  volumeClaimTemplates:
+    - metadata: { name: config }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 2Gi }
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 100Gi }

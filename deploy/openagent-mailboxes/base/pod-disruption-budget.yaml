@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: mailbox-gateway }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mailbox-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: stalwart }
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stalwart
