@@ -2,7 +2,7 @@ name: Promotion integrity
 
 on:
   push:
-    branches: [stage, release]
+    branches: [stage, main]
 
 permissions:
   contents: read
