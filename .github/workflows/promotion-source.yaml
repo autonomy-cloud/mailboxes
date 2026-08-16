@@ -2,7 +2,7 @@ name: Promotion source
 
 on:
   pull_request:
-    branches: [stage, main]
+    branches: [stage, release]
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
           set -euo pipefail
           case "${BASE}" in
             stage) expected=develop ;;
-            main) expected=stage ;;
+            release) expected=stage ;;
             *) exit 1 ;;
           esac
           test "${HEAD_REPO}" = "${THIS_REPO}" || {
