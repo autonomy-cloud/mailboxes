@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 import { loadConfig } from './config.js';
 import { OpenAgentTokenVerifier } from './openagent-token-verifier.js';
+import { initializeStalwart } from './startup.js';
 import { StalwartClient } from './stalwart-client.js';
 
 const config = loadConfig();
@@ -90,9 +91,26 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(JSON.stringify(body));
 }
 
-if (config.stalwartAutoBootstrap) {
-  const bootstrapped = await stalwart.bootstrapIfNeeded();
-  if (bootstrapped) {
+if (config.stalwartAutoBootstrap || config.stalwartConfigureOpenAgentOidc) {
+  const startup = await initializeStalwart({
+    bootstrapIfNeeded: () => config.stalwartAutoBootstrap
+      ? stalwart.bootstrapIfNeeded()
+      : Promise.resolve(false),
+    ensureOpenAgentOidc: () => config.stalwartConfigureOpenAgentOidc
+      ? stalwart.ensureOpenAgentOidc()
+      : Promise.resolve(),
+  }, {
+    onRetry: (error, attempt) => {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'stalwart.initialization_retry',
+        attempt,
+        message,
+      }));
+    },
+  });
+  if (startup.bootstrapped) {
     console.info(JSON.stringify({
       level: 'info',
       event: 'stalwart.bootstrapped',
@@ -100,15 +118,14 @@ if (config.stalwartAutoBootstrap) {
       domain: config.mailDomain,
     }));
   }
-}
-if (config.stalwartConfigureOpenAgentOidc) {
-  await stalwart.ensureOpenAgentOidc();
-  console.info(JSON.stringify({
-    level: 'info',
-    event: 'stalwart.oidc_configured',
-    issuer: config.identityIssuer,
-    audience: config.mailAudience,
-  }));
+  if (config.stalwartConfigureOpenAgentOidc) {
+    console.info(JSON.stringify({
+      level: 'info',
+      event: 'stalwart.oidc_configured',
+      issuer: config.identityIssuer,
+      audience: config.mailAudience,
+    }));
+  }
 }
 
 if (config.bootstrapOnly) {
