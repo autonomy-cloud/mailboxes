@@ -11,4 +11,9 @@ for dockerfile in "${dockerfiles[@]}"; do
   done < <(awk '$1 == "FROM" { for (i = 2; i <= NF; i++) if ($i !~ /^--/ && $i != "AS") { print $i; break } }' "$dockerfile" | grep -E '[/]|^node:' || true)
 done
 
+grep -Eq '^[[:space:]]*apt-get upgrade -yq' openagent/Dockerfile.stalwart || {
+  echo "OpenAgent Stalwart runtime must upgrade fixed base packages before release scanning" >&2
+  exit 1
+}
+
 echo "OpenAgent mailbox build inputs are digest-pinned"
