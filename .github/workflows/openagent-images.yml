@@ -195,7 +195,8 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch -c "$BRANCH"
-          git add tenants/cast/applications/mailboxes/stage
+          git add tenants/cast/applications/mailboxes/stage \
+            clusters/stage/azure-centralus/openagent-mailboxes.yaml
           git commit -m "chore(mailboxes): promote stage ${REVISION:0:9}"
           git push origin "HEAD:refs/heads/$BRANCH"
 
@@ -223,6 +224,7 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git switch -c "$BRANCH"
-          git add tenants/cast/applications/mailboxes/release
+          git add tenants/cast/applications/mailboxes/release \
+            clusters/release/azure-centralus/openagent-mailboxes.yaml
           git commit -m "chore(mailboxes): promote release ${REVISION:0:9}"
           git push origin "HEAD:refs/heads/$BRANCH"
