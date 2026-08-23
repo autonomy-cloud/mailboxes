@@ -65,7 +65,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: { persist-credentials: false }
-      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -85,7 +84,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64
+          # Both OpenAgent Kubernetes targets are Azure amd64. Avoid putting
+          # emulated arm64 builds on the deployment-critical path.
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
@@ -168,3 +169,78 @@ jobs:
           set -euo pipefail
           digest="$(docker buildx imagetools inspect "${IMAGE}:release" --format '{{json .Manifest}}' | jq -r .digest)"
           cosign sign --yes "${IMAGE}@${digest}"
+
+  promote-lrai-stage:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/stage'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    concurrency: {group: lrai-openagent-promotions, cancel-in-progress: false}
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v6
+        with:
+          repository: autonomy-cloud/lrai
+          ref: main
+          ssh-key: ${{ secrets.LRAI_DEPLOY_KEY }}
+          fetch-depth: 0
+      - name: Promote immutable mailbox images to Stage
+        env:
+          REVISION: ${{ github.sha }}
+          BRANCH: gitops/mailboxes-stage-${{ github.run_id }}
+        run: |
+          tag="stage-${REVISION}"
+          stalwart="$(docker buildx imagetools inspect "ghcr.io/autonomy-cloud/mailboxes-stalwart:${tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          gateway="$(docker buildx imagetools inspect "ghcr.io/autonomy-cloud/openagent-mailbox-gateway:${tag}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          ./scripts/promote-mailboxes-images.sh stage "$stalwart" "$gateway" "$REVISION"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch -c "$BRANCH"
+          git add tenants/cast/applications/mailboxes/stage \
+            clusters/stage/azure-centralus/openagent-mailboxes.yaml
+          git commit -m "chore(mailboxes): promote stage ${REVISION:0:9}"
+          git push origin "HEAD:refs/heads/$BRANCH"
+
+  promote-lrai-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+    needs: promote-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    concurrency: {group: lrai-openagent-promotions, cancel-in-progress: false}
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v6
+        with:
+          repository: autonomy-cloud/lrai
+          ref: main
+          ssh-key: ${{ secrets.LRAI_DEPLOY_KEY }}
+          fetch-depth: 0
+      - name: Promote accepted mailbox images to Release
+        env:
+          REVISION: ${{ github.sha }}
+          BRANCH: gitops/mailboxes-release-${{ github.run_id }}
+        run: |
+          stalwart="$(docker buildx imagetools inspect ghcr.io/autonomy-cloud/mailboxes-stalwart:release --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          gateway="$(docker buildx imagetools inspect ghcr.io/autonomy-cloud/openagent-mailbox-gateway:release --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          ./scripts/promote-mailboxes-images.sh release "$stalwart" "$gateway" "$REVISION"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git switch -c "$BRANCH"
+          git add tenants/cast/applications/mailboxes/release \
+            clusters/release/azure-centralus/openagent-mailboxes.yaml
+          git commit -m "chore(mailboxes): promote release ${REVISION:0:9}"
+          git push origin "HEAD:refs/heads/$BRANCH"
