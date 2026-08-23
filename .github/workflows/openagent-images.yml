@@ -176,25 +176,15 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: {group: lrai-openagent-promotions, cancel-in-progress: false}
     steps:
-      - id: token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.VISCA_APP_ID }}
-          private-key: ${{ secrets.LRAI_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: lrai
-          permission-contents: write
-          permission-pull-requests: write
       - uses: docker/setup-buildx-action@v4
       - uses: actions/checkout@v6
         with:
           repository: autonomy-cloud/lrai
           ref: main
-          token: ${{ steps.token.outputs.token }}
+          ssh-key: ${{ secrets.LRAI_DEPLOY_KEY }}
           fetch-depth: 0
       - name: Promote immutable mailbox images to Stage
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
           REVISION: ${{ github.sha }}
           BRANCH: gitops/mailboxes-stage-${{ github.run_id }}
         run: |
@@ -208,8 +198,6 @@ jobs:
           git add tenants/cast/applications/mailboxes/stage
           git commit -m "chore(mailboxes): promote stage ${REVISION:0:9}"
           git push origin "HEAD:refs/heads/$BRANCH"
-          pr="$(gh pr create --repo autonomy-cloud/lrai --base main --head "$BRANCH" --title "chore(mailboxes): promote stage ${REVISION:0:9}" --body "Automated immutable Mailboxes Stage promotion from autonomy-cloud/mailboxes@${REVISION}.")"
-          gh pr merge "$pr" --auto --squash --delete-branch
 
   promote-lrai-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/release'
@@ -217,25 +205,15 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: {group: lrai-openagent-promotions, cancel-in-progress: false}
     steps:
-      - id: token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.VISCA_APP_ID }}
-          private-key: ${{ secrets.LRAI_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: lrai
-          permission-contents: write
-          permission-pull-requests: write
       - uses: docker/setup-buildx-action@v4
       - uses: actions/checkout@v6
         with:
           repository: autonomy-cloud/lrai
           ref: main
-          token: ${{ steps.token.outputs.token }}
+          ssh-key: ${{ secrets.LRAI_DEPLOY_KEY }}
           fetch-depth: 0
       - name: Promote accepted mailbox images to Release
         env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
           REVISION: ${{ github.sha }}
           BRANCH: gitops/mailboxes-release-${{ github.run_id }}
         run: |
@@ -248,5 +226,3 @@ jobs:
           git add tenants/cast/applications/mailboxes/release
           git commit -m "chore(mailboxes): promote release ${REVISION:0:9}"
           git push origin "HEAD:refs/heads/$BRANCH"
-          pr="$(gh pr create --repo autonomy-cloud/lrai --base main --head "$BRANCH" --title "chore(mailboxes): promote release ${REVISION:0:9}" --body "Promotes the exact Mailboxes digests accepted in Stage; no Release rebuild.")"
-          gh pr merge "$pr" --auto --squash --delete-branch
