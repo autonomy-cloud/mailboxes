@@ -23,9 +23,14 @@ export class OpenAgentTokenVerifier {
   readonly #config: GatewayConfig;
   readonly #verifyJwt: VerifyJwt;
   readonly #jwks: ReturnType<typeof createRemoteJWKSet>;
+  readonly #issuer: string;
 
   constructor(config: GatewayConfig, verifyJwt: VerifyJwt = jwtVerify) {
+    if (!config.identityIssuer || !config.identityJwksUrl) {
+      throw new Error('Legacy OpenAgent Identity verification is not configured');
+    }
     this.#config = config;
+    this.#issuer = config.identityIssuer;
     this.#verifyJwt = verifyJwt;
     this.#jwks = createRemoteJWKSet(
       new URL(config.identityJwksUrl),
@@ -35,7 +40,7 @@ export class OpenAgentTokenVerifier {
 
   async verify(token: string): Promise<AgentMailIdentity> {
     const { payload } = await this.#verifyJwt(token, this.#jwks, {
-      issuer: this.#config.identityIssuer,
+      issuer: this.#issuer,
       audience: this.#config.mailAudience,
       clockTolerance: CLOCK_TOLERANCE_SECONDS,
       algorithms: ['RS256', 'PS256', 'ES256', 'ES384'],
