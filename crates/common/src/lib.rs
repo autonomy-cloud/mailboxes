@@ -100,10 +100,11 @@ Schema history:
 4 - v0.14.0
 5 - v0.15.0
 6 - v0.16.0
+7 - OpenAgent Tenant/name unique index
 
 */
 
-pub const DATABASE_SCHEMA_VERSION: u32 = 6;
+pub const DATABASE_SCHEMA_VERSION: u32 = 7;
 
 pub const LONG_1D_SLUMBER: Duration = Duration::from_secs(60 * 60 * 24);
 pub const LONG_1Y_SLUMBER: Duration = Duration::from_secs(60 * 60 * 24 * 365);

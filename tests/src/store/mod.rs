@@ -10,6 +10,7 @@ pub mod lookup;
 pub mod ops;
 pub mod query;
 pub mod registry;
+pub mod tenant_name_index;
 
 use crate::utils::server::TestServerBuilder;
 use std::io::Read;
