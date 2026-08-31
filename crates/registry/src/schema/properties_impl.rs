@@ -3578,11 +3578,18 @@ impl ObjectType {
                 IndexSchemaType::Search,
                 IndexSchemaValueType::Id,
             )],
-            ObjectType::Tenant => vec![IndexSchema::new(
-                Property::Text,
-                IndexSchemaType::Search,
-                IndexSchemaValueType::Text,
-            )],
+            ObjectType::Tenant => vec![
+                IndexSchema::new(
+                    Property::Text,
+                    IndexSchemaType::Search,
+                    IndexSchemaValueType::Text,
+                ),
+                IndexSchema::new(
+                    Property::Name,
+                    IndexSchemaType::Unique,
+                    IndexSchemaValueType::Keyword,
+                ),
+            ],
             _ => vec![],
         }
     }
