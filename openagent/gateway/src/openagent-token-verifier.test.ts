@@ -9,6 +9,10 @@ const config: GatewayConfig = {
   identityJwksUrl: 'https://id.openagent.md/oidc/jwks',
   mailAudience: 'https://mail.openagent.md',
   mailDomain: 'agents.openagent.md',
+  legacyAgentMailDomains: [],
+  castDkimSelector: 'cast1',
+  mailPublicDeliveryConfigured: false,
+  mailTelemetryWebhookConfigured: false,
   requiredScopes: ['mail:read'],
   stalwartBaseUrl: 'http://stalwart:8080',
   stalwartPublicUrl: 'https://inbox.openagent.md',
@@ -21,6 +25,7 @@ const config: GatewayConfig = {
   stalwartRequestTlsCertificate: false,
   stalwartAutoBootstrap: false,
   stalwartConfigureOpenAgentOidc: false,
+  stalwartConfigureCastMail: false,
   bootstrapOnly: false,
 };
 
