@@ -177,58 +177,38 @@ export class StalwartClient {
     });
     assertNoSetFailures(senderAuth, 'Parent-domain sender authentication configuration');
 
-    const signature = await this.#castDkimSignature(
+    const activeRsaSignatures = await this.#activeParentRsaSignatures(
       session.apiUrl,
       adminAccountId,
       domainId,
     );
+    if (activeRsaSignatures.length !== 1) {
+      throw new Error(
+        `Expected exactly one active RSA signer for ${this.#config.mailDomain}, found ${activeRsaSignatures.length}`,
+      );
+    }
+    const domain = await this.#registryObject(
+      session.apiUrl,
+      adminAccountId,
+      'Domain',
+      domainId,
+    );
+    if (asRecord(domain.dkimManagement)['@type'] === 'Automatic') {
+      const manual = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
+        update: { [domainId]: { dkimManagement: { '@type': 'Manual' } } },
+      });
+      assertNoSetFailures(manual, 'Stable parent-domain DKIM freeze');
+    }
+    const signature = activeRsaSignatures[0];
     if (!signature) {
-      const domain = await this.#registryObject(
-        session.apiUrl,
-        adminAccountId,
-        'Domain',
-        domainId,
-      );
-      const management = asRecord(domain.dkimManagement);
-      const desiredPending = management['@type'] === 'Automatic' &&
-        management.selectorTemplate === this.#config.castDkimSelector &&
-        asRecord(management.algorithms).Dkim1RsaSha256 === true;
-      if (!desiredPending) {
-        if (management['@type'] === 'Automatic') {
-          const manual = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
-            update: { [domainId]: { dkimManagement: { '@type': 'Manual' } } },
-          });
-          assertNoSetFailures(manual, 'DKIM automatic rotation reset');
-        }
-        const automatic = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
-          update: {
-            [domainId]: {
-              dkimManagement: {
-                '@type': 'Automatic',
-                algorithms: { Dkim1RsaSha256: true },
-                selectorTemplate: this.#config.castDkimSelector,
-                rotateAfter: 315_360_000_000,
-                retireAfter: 604_800_000,
-                deleteAfter: 2_592_000_000,
-              },
-            },
-          },
-        });
-        assertNoSetFailures(automatic, 'Stable parent-domain DKIM generation');
-      }
-    } else {
-      const domain = await this.#registryObject(
-        session.apiUrl,
-        adminAccountId,
-        'Domain',
-        domainId,
-      );
-      if (asRecord(domain.dkimManagement)['@type'] === 'Automatic') {
-        const manual = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
-          update: { [domainId]: { dkimManagement: { '@type': 'Manual' } } },
-        });
-        assertNoSetFailures(manual, 'Stable parent-domain DKIM freeze');
-      }
+      throw new Error('Active parent-domain RSA signer disappeared during configuration');
+    }
+    if (signature.selector !== this.#config.castDkimSelector) {
+      const signatureId = requiredString(signature.id, 'Active RSA signer id');
+      const renamed = await this.#call(session.apiUrl, adminAccountId, 'x:DkimSignature/set', {
+        update: { [signatureId]: { selector: this.#config.castDkimSelector } },
+      });
+      assertNoSetFailures(renamed, 'Stable parent-domain DKIM selector');
     }
     await this.#reloadSettings(session.apiUrl, adminAccountId);
     await this.#invalidateCaches(session.apiUrl, adminAccountId);
@@ -1164,22 +1144,30 @@ export class StalwartClient {
     adminAccountId: string,
     domainId: string,
   ): Promise<Record<string, unknown> | undefined> {
+    return (await this.#activeParentRsaSignatures(apiUrl, adminAccountId, domainId))
+      .find((signature) => signature.selector === this.#config.castDkimSelector);
+  }
+
+  async #activeParentRsaSignatures(
+    apiUrl: string,
+    adminAccountId: string,
+    domainId: string,
+  ): Promise<Record<string, unknown>[]> {
     const query = await this.#call(apiUrl, adminAccountId, 'x:DkimSignature/query', {
       filter: { domainId },
       limit: 100,
     });
     const ids = stringIds(query.ids);
-    if (ids.length === 0) return undefined;
+    if (ids.length === 0) return [];
     const get = await this.#call(apiUrl, adminAccountId, 'x:DkimSignature/get', {
       ids,
       properties: ['@type', 'selector', 'domainId', 'stage', 'publicKey'],
     });
     return (Array.isArray(get.list) ? get.list : [])
       .filter(isRecord)
-      .find((signature) => (
+      .filter((signature) => (
         signature['@type'] === 'Dkim1RsaSha256' &&
-        signature.selector === this.#config.castDkimSelector &&
-        signature.stage === 'Active' &&
+        String(signature.stage).toLowerCase() === 'active' &&
         optionalId(signature.domainId) === domainId &&
         typeof signature.publicKey === 'string' &&
         signature.publicKey.length > 0
