@@ -15,6 +15,7 @@ import { loadConfig } from './config.js';
 import { OpenAgentTokenVerifier } from './openagent-token-verifier.js';
 import { initializeStalwart } from './startup.js';
 import { StalwartClient } from './stalwart-client.js';
+import { telemetryAccountId } from './telemetry.js';
 
 const config = loadConfig();
 const verifier = config.identityIssuer && config.identityJwksUrl
@@ -188,7 +189,15 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     for (const event of events) {
       if (event.type !== 'message-ingest.ham' && event.type !== 'message-ingest.spam') continue;
       const data = event.data;
-      const accountId = scalarId(data.accountId, 'accountId');
+      let accountId: string;
+      try {
+        accountId = telemetryAccountId(data.accountId);
+      } catch (error) {
+        throw new ClientRequestError(
+          error instanceof Error ? error.message : 'Telemetry event has an invalid accountId',
+          400,
+        );
+      }
       const emailId = scalarId(data.id, 'id');
       const result = await stalwart.forwardInboundMailEvent({
         sourceId: `mail:${accountId}:${emailId}`,
