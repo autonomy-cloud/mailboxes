@@ -809,19 +809,21 @@ export class StalwartClient {
 
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
-    const account = await this.#registryObject(
+    const account = await this.#optionalRegistryObject(
       session.apiUrl,
       adminAccountId,
       'Account',
       input.accountId,
     );
+    if (!account) return 'ignored';
     const domainId = requiredId(account.domainId, 'inbound mailbox domain id');
-    const domain = await this.#registryObject(
+    const domain = await this.#optionalRegistryObject(
       session.apiUrl,
       adminAccountId,
       'Domain',
       domainId,
     );
+    if (!domain) return 'ignored';
     const localPart = requiredString(account.name, 'inbound mailbox local part');
     const domainName = requiredString(domain.name, 'inbound mailbox domain name');
     if (
@@ -1373,10 +1375,24 @@ export class StalwartClient {
     objectType: 'Account' | 'Domain',
     id: string,
   ): Promise<Record<string, unknown>> {
-    const response = await this.#call(apiUrl, accountId, `x:${objectType}/get`, { ids: [id] });
-    const object = Array.isArray(response.list) ? response.list.find(isRecord) : undefined;
+    const object = await this.#optionalRegistryObject(apiUrl, accountId, objectType, id);
     if (!object) throw new Error(`Stalwart ${objectType.toLowerCase()} ${id} was not found`);
     return object;
+  }
+
+  async #optionalRegistryObject(
+    apiUrl: string,
+    accountId: string,
+    objectType: 'Account' | 'Domain',
+    id: string,
+  ): Promise<Record<string, unknown> | undefined> {
+    const response = await this.#call(apiUrl, accountId, `x:${objectType}/get`, { ids: [id] });
+    const objects = Array.isArray(response.list) ? response.list.filter(isRecord) : [];
+    const object = objects.find((entry) => entry.id === id);
+    if (object) return object;
+    const notFound = stringIds(response.notFound);
+    if (objects.length === 0 && notFound.length === 1 && notFound[0] === id) return undefined;
+    throw new Error(`Stalwart returned an invalid ${objectType.toLowerCase()} lookup response`);
   }
 
   async #assertObjectTenant(
