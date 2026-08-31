@@ -1326,11 +1326,45 @@ export class StalwartClient {
   }
 
   async #findTenant(apiUrl: string, accountId: string, name: string): Promise<string | undefined> {
-    const response = await this.#call(apiUrl, accountId, 'x:Tenant/query', {
-      filter: { name },
-      limit: 2,
+    // This registry version does not support Tenant/name filters. Inventory a
+    // bounded admin-visible set, fetch names, and match exactly client-side.
+    const query = await this.#call(apiUrl, accountId, 'x:Tenant/query', {
+      calculateTotal: true,
+      limit: 100,
     });
-    return onlyId(response.ids, `tenant ${name}`);
+    const ids = stringIds(query.ids);
+    const total = query.total;
+    if (!Number.isSafeInteger(total) || (total as number) < 0) {
+      throw new Error('Stalwart tenant inventory did not include a valid total');
+    }
+    if (total !== ids.length) {
+      throw new Error('Stalwart tenant inventory exceeded the safety bound');
+    }
+    if (ids.length === 0) return undefined;
+
+    const response = await this.#call(apiUrl, accountId, 'x:Tenant/get', {
+      ids,
+      properties: ['name'],
+    });
+    const notFound = stringIds(response.notFound);
+    const tenants = (Array.isArray(response.list) ? response.list : []).filter(isRecord);
+    const returnedIds = tenants
+      .map((tenant) => tenant.id)
+      .filter((id): id is string => typeof id === 'string');
+    const expectedIds = new Set(ids);
+    if (
+      notFound.length > 0 ||
+      returnedIds.length !== ids.length ||
+      new Set(returnedIds).size !== ids.length ||
+      returnedIds.some((id) => !expectedIds.has(id))
+    ) {
+      throw new Error('Stalwart tenant inventory changed during lookup');
+    }
+    const matches = tenants
+      .filter((tenant) => tenant.name === name)
+      .map((tenant) => tenant.id)
+      .filter((id): id is string => typeof id === 'string');
+    return onlyId(matches, `tenant ${name}`);
   }
 
   async #registryObject(
