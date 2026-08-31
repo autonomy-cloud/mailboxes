@@ -36,12 +36,17 @@ const session = {
   uploadUrl: 'https://mail.openagent.md/jmap/upload/{accountId}',
   downloadUrl: 'https://mail.openagent.md/jmap/download/{accountId}/{blobId}/{name}?type={type}',
   capabilities: {
-    'urn:stalwart:jmap': {},
     'urn:ietf:params:jmap:mail': {},
     'urn:ietf:params:jmap:submission': {},
     'urn:ietf:params:jmap:calendars': {},
   },
-  accounts: { admin: {} },
+  accounts: {
+    admin: {
+      accountCapabilities: {
+        'urn:stalwart:jmap': {},
+      },
+    },
+  },
   primaryAccounts: { 'urn:ietf:params:jmap:mail': 'admin' },
 };
 
@@ -111,6 +116,24 @@ describe('StalwartClient Cast-native provisioning', () => {
     });
   });
 
+  it('does not accept a registry capability owned only by an unrelated account', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      ...session,
+      accounts: {
+        admin: { accountCapabilities: {} },
+        unrelated: { accountCapabilities: { 'urn:stalwart:jmap': {} } },
+      },
+    })));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+
+    await expect(client.serviceCapabilities()).resolves.toEqual({
+      mailboxProvisioning: false,
+      inboundReceiving: true,
+      outboundDelivery: false,
+      calendarSync: true,
+    });
+  });
+
   it('reports outbound delivery only after signing configuration and DNS proof match', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
@@ -122,7 +145,7 @@ describe('StalwartClient Cast-native provisioning', () => {
           '@type': 'Dkim1RsaSha256',
           selector: 'cast1',
           domainId: 'base-domain',
-          stage: 'Active',
+          stage: 'active',
           publicKey: 'PUBLICKEY',
         }],
       }))
@@ -151,16 +174,27 @@ describe('StalwartClient Cast-native provisioning', () => {
       .serviceCapabilities()).resolves.toMatchObject({ outboundDelivery: false });
   });
 
-  it('configures a stable parent-domain cast1 RSA signer without private-key export', async () => {
+  it('reuses the active parent-domain RSA signer under cast1 without private-key export', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['base-domain'] }))
       .mockResolvedValueOnce(registryResponse('x:SenderAuth/set', { updated: { singleton: null } }))
-      .mockResolvedValueOnce(registryResponse('x:DkimSignature/query', { ids: [] }))
+      .mockResolvedValueOnce(registryResponse('x:DkimSignature/query', { ids: ['dkim-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:DkimSignature/get', {
+        list: [{
+          id: 'dkim-1',
+          '@type': 'Dkim1RsaSha256',
+          selector: 'v1-rsa-20260810',
+          domainId: 'base-domain',
+          stage: 'active',
+          publicKey: 'PUBLICKEY',
+        }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
-        list: [{ id: 'base-domain', dkimManagement: { '@type': 'Manual' } }],
+        list: [{ id: 'base-domain', dkimManagement: { '@type': 'Automatic' } }],
       }))
       .mockResolvedValueOnce(registryResponse('x:Domain/set', { updated: { 'base-domain': null } }))
+      .mockResolvedValueOnce(registryResponse('x:DkimSignature/set', { updated: { 'dkim-1': null } }))
       .mockResolvedValueOnce(methodResponse())
       .mockResolvedValueOnce(methodResponse());
     const client = new StalwartClient({
@@ -181,25 +215,16 @@ describe('StalwartClient Cast-native provisioning', () => {
       }),
       'openagent',
     ]);
-    expect(requestBody(fetchMock, 5).methodCalls[0]).toEqual([
-      'x:Domain/set',
+    expect(requestBody(fetchMock, 7).methodCalls[0]).toEqual([
+      'x:DkimSignature/set',
       expect.objectContaining({
         update: {
-          'base-domain': {
-            dkimManagement: {
-              '@type': 'Automatic',
-              algorithms: { Dkim1RsaSha256: true },
-              selectorTemplate: 'cast1',
-              rotateAfter: 315_360_000_000,
-              retireAfter: 604_800_000,
-              deleteAfter: 2_592_000_000,
-            },
-          },
+          'dkim-1': { selector: 'cast1' },
         },
       }),
       'openagent',
     ]);
-    expect(JSON.stringify(requestBody(fetchMock, 5))).not.toContain('privateKey');
+    expect(JSON.stringify(requestBody(fetchMock, 7))).not.toContain('privateKey');
   });
 
   it('creates a tenant-bound workspace domain and tenant-bound mailbox', async () => {
