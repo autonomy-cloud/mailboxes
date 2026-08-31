@@ -30,7 +30,9 @@ type JmapSession = {
   uploadUrl?: string;
   downloadUrl?: string;
   capabilities?: Record<string, unknown>;
-  accounts: Record<string, unknown>;
+  accounts: Record<string, {
+    accountCapabilities?: Record<string, unknown>;
+  }>;
   primaryAccounts?: Record<string, string>;
 };
 
@@ -129,7 +131,14 @@ export class StalwartClient {
     try {
       const session = await this.#session();
       const capabilities = asRecord(session.capabilities);
-      const hasRegistry = Object.hasOwn(capabilities, STALWART_CAPABILITY);
+      const adminAccountId = primaryAccountId(session);
+      const adminCapabilities = asRecord(
+        session.accounts[adminAccountId]?.accountCapabilities,
+      );
+      // The registry extension is account-scoped. Fail closed unless the
+      // administrator account selected for registry calls owns it; a grant on
+      // an unrelated account must never advertise provisioning readiness.
+      const hasRegistry = Object.hasOwn(adminCapabilities, STALWART_CAPABILITY);
       const hasMail = Object.hasOwn(capabilities, MAIL_CAPABILITY);
       const hasSubmission = Object.hasOwn(capabilities, SUBMISSION_CAPABILITY);
       const hasCalendar = Object.hasOwn(capabilities, CALENDAR_CAPABILITY);
