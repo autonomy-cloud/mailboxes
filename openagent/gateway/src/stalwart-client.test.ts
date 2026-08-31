@@ -36,12 +36,17 @@ const session = {
   uploadUrl: 'https://mail.openagent.md/jmap/upload/{accountId}',
   downloadUrl: 'https://mail.openagent.md/jmap/download/{accountId}/{blobId}/{name}?type={type}',
   capabilities: {
-    'urn:stalwart:jmap': {},
     'urn:ietf:params:jmap:mail': {},
     'urn:ietf:params:jmap:submission': {},
     'urn:ietf:params:jmap:calendars': {},
   },
-  accounts: { admin: {} },
+  accounts: {
+    admin: {
+      accountCapabilities: {
+        'urn:stalwart:jmap': {},
+      },
+    },
+  },
   primaryAccounts: { 'urn:ietf:params:jmap:mail': 'admin' },
 };
 
@@ -105,6 +110,24 @@ describe('StalwartClient Cast-native provisioning', () => {
 
     await expect(client.serviceCapabilities()).resolves.toEqual({
       mailboxProvisioning: true,
+      inboundReceiving: true,
+      outboundDelivery: false,
+      calendarSync: true,
+    });
+  });
+
+  it('does not accept a registry capability owned only by an unrelated account', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
+      ...session,
+      accounts: {
+        admin: { accountCapabilities: {} },
+        unrelated: { accountCapabilities: { 'urn:stalwart:jmap': {} } },
+      },
+    })));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+
+    await expect(client.serviceCapabilities()).resolves.toEqual({
+      mailboxProvisioning: false,
       inboundReceiving: true,
       outboundDelivery: false,
       calendarSync: true,
