@@ -57,8 +57,12 @@ function methodResponse() {
 }
 
 function registryResponse(method: string, payload: Record<string, unknown>) {
+  const normalizedPayload = method === 'x:Tenant/query' &&
+    Array.isArray(payload.ids) && payload.total === undefined
+    ? { ...payload, total: payload.ids.length }
+    : payload;
   return new Response(JSON.stringify({
-    methodResponses: [[method, { accountId: 'admin', ...payload }, 'openagent']],
+    methodResponses: [[method, { accountId: 'admin', ...normalizedPayload }, 'openagent']],
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
@@ -273,6 +277,15 @@ describe('StalwartClient Cast-native provisioning', () => {
       }),
       'openagent',
     ]);
+    expect(requestBody(fetchMock, 1).methodCalls[0]).toEqual([
+      'x:Tenant/query',
+      expect.objectContaining({
+        accountId: 'admin',
+        calculateTotal: true,
+        limit: 100,
+      }),
+      'openagent',
+    ]);
     expect(requestBody(fetchMock, 4).methodCalls[0]).toEqual([
       'x:Domain/set',
       expect.objectContaining({
@@ -315,10 +328,68 @@ describe('StalwartClient Cast-native provisioning', () => {
     ]);
   });
 
+  it('fails closed when the tenant inventory exceeds its lookup bound', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/query', {
+        ids: ['tenant-1'],
+        total: 2,
+      }));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+
+    await expect(client.ensureCastMailbox(input)).rejects.toThrow(
+      'tenant inventory exceeded the safety bound',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when multiple tenant records have the exact workspace name', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/query', {
+        ids: ['tenant-1', 'tenant-2'],
+        total: 2,
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [
+          { id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' },
+          { id: 'tenant-2', name: 'cast-workspace:a1b2-c3d4' },
+        ],
+      }));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+
+    await expect(client.ensureCastMailbox(input)).rejects.toThrow(
+      'multiple records for tenant cast-workspace:a1b2-c3d4',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed when Tenant/get does not cover the queried inventory', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/query', {
+        ids: ['tenant-1', 'tenant-2'],
+        total: 2,
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+        notFound: ['tenant-2'],
+      }));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+
+    await expect(client.ensureCastMailbox(input)).rejects.toThrow(
+      'tenant inventory changed during lookup',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('removes only the exact tenant-owned legacy mailbox and an empty legacy domain', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-new'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-new', memberTenantId: 'tenant-1' }],
@@ -355,12 +426,12 @@ describe('StalwartClient Cast-native provisioning', () => {
         domainRemoved: true,
       }],
     });
-    expect(requestBody(fetchMock, 11).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 12).methodCalls[0]).toEqual([
       'x:Account/set',
       expect.objectContaining({ accountId: 'admin', destroy: ['account-old'] }),
       'openagent',
     ]);
-    expect(requestBody(fetchMock, 13).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 14).methodCalls[0]).toEqual([
       'x:Domain/set',
       expect.objectContaining({ accountId: 'admin', destroy: ['domain-old'] }),
       'openagent',
@@ -371,6 +442,9 @@ describe('StalwartClient Cast-native provisioning', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-new'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-new', memberTenantId: 'tenant-1' }],
@@ -392,13 +466,16 @@ describe('StalwartClient Cast-native provisioning', () => {
     await expect(client.ensureCastMailbox(input)).rejects.toThrow(
       'belongs to tenant tenant-other, expected tenant-1',
     );
-    expect(fetchMock).toHaveBeenCalledTimes(9);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
   });
 
   it('updates aliases and reactivates quotas without duplicating existing objects', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
@@ -415,7 +492,7 @@ describe('StalwartClient Cast-native provisioning', () => {
     expect(result.created).toBe(false);
     expect(result.tenantCreated).toBe(false);
     expect(result.domainCreated).toBe(false);
-    expect(requestBody(fetchMock, 6).methodCalls[0]?.[1]).toEqual(expect.objectContaining({
+    expect(requestBody(fetchMock, 7).methodCalls[0]?.[1]).toEqual(expect.objectContaining({
       update: {
         'account-1': expect.objectContaining({
           description: 'Sales agent',
@@ -429,6 +506,9 @@ describe('StalwartClient Cast-native provisioning', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-1', memberTenantId: 'tenant-2' }],
@@ -444,6 +524,9 @@ describe('StalwartClient Cast-native provisioning', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
@@ -471,7 +554,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       address: input.permanentAddress,
       retired: true,
     });
-    expect(requestBody(fetchMock, 6).methodCalls[0]?.[1]).toEqual(expect.objectContaining({
+    expect(requestBody(fetchMock, 7).methodCalls[0]?.[1]).toEqual(expect.objectContaining({
       update: {
         'account-1': expect.objectContaining({
           aliases: {
@@ -494,6 +577,9 @@ describe('StalwartClient Cast-native provisioning', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
@@ -544,10 +630,10 @@ describe('StalwartClient Cast-native provisioning', () => {
       messageId: expect.stringMatching(/^<.+@wsp-a1b2c3d4\.agents\.openagent\.md>$/u),
     });
 
-    expect(fetchMock.mock.calls[8]?.[0]).toBe(
+    expect(fetchMock.mock.calls[9]?.[0]).toBe(
       'http://stalwart:8080/jmap/upload/account-1',
     );
-    const upload = fetchMock.mock.calls[8]?.[1] as RequestInit;
+    const upload = fetchMock.mock.calls[9]?.[1] as RequestInit;
     expect(upload.headers).toEqual(expect.objectContaining({
       'Content-Type': 'message/rfc5322',
     }));
@@ -557,7 +643,7 @@ describe('StalwartClient Cast-native provisioning', () => {
     expect(raw).not.toContain('Bcc:');
     expect(raw).toContain("filename*=UTF-8''note.txt");
 
-    expect(requestBody(fetchMock, 9).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 10).methodCalls[0]).toEqual([
       'Email/import',
       expect.objectContaining({
         accountId: 'account-1',
@@ -571,7 +657,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       }),
       'openagent',
     ]);
-    expect(requestBody(fetchMock, 10).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 11).methodCalls[0]).toEqual([
       'EmailSubmission/set',
       expect.objectContaining({
         accountId: 'account-1',
@@ -594,6 +680,9 @@ describe('StalwartClient Cast-native provisioning', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
       .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
       .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
       .mockResolvedValueOnce(registryResponse('x:Domain/get', {
         list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
@@ -624,7 +713,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       },
     })).resolves.toEqual({ externalId: 'event-1' });
 
-    expect(requestBody(fetchMock, 8).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 9).methodCalls[0]).toEqual([
       'CalendarEvent/set',
       expect.objectContaining({
         accountId: 'account-1',
