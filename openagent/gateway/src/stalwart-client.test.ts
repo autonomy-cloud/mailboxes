@@ -846,6 +846,50 @@ describe('StalwartClient Cast-native provisioning', () => {
     expect(crossTenantFetch).toHaveBeenCalledTimes(3);
   });
 
+  it('terminally ignores stale inbound account and domain events', async () => {
+    const missingAccountFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Account/get', {
+        list: [],
+        notFound: ['account-1'],
+      }));
+    const missingAccountClient = new StalwartClient(
+      config,
+      missingAccountFetch as unknown as typeof fetch,
+    );
+    await expect(missingAccountClient.forwardInboundMailEvent({
+      sourceId: 'mail:account-1:email-1',
+      accountId: 'account-1',
+      emailId: 'email-1',
+    })).resolves.toBe('ignored');
+    expect(missingAccountFetch).toHaveBeenCalledTimes(2);
+
+    const missingDomainFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Account/get', {
+        list: [{
+          id: 'account-2',
+          name: 'agt-e5f67890',
+          domainId: 'domain-2',
+          memberTenantId: 'tenant-1',
+        }],
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/get', {
+        list: [],
+        notFound: ['domain-2'],
+      }));
+    const missingDomainClient = new StalwartClient(
+      config,
+      missingDomainFetch as unknown as typeof fetch,
+    );
+    await expect(missingDomainClient.forwardInboundMailEvent({
+      sourceId: 'mail:account-2:email-2',
+      accountId: 'account-2',
+      emailId: 'email-2',
+    })).resolves.toBe('ignored');
+    expect(missingDomainFetch).toHaveBeenCalledTimes(3);
+  });
+
   it('treats an oversized raw message as a terminal ignored event', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
