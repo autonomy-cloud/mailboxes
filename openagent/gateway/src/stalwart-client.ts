@@ -486,6 +486,7 @@ export class StalwartClient {
       tenant.id,
       input.displayName,
       aliases,
+      address,
     );
     const legacyCleanup: LegacyMailboxCleanupResult[] = [];
     for (const legacyBaseDomain of this.#config.legacyAgentMailDomains) {
@@ -1265,6 +1266,7 @@ export class StalwartClient {
     tenantId: string,
     displayName: string,
     aliases: string[],
+    canonicalAddress?: string,
   ): Promise<{ id: string; created: boolean }> {
     const aliasObjects = emailAliasObjects(aliases, domainId);
     const existingId = await this.#findAccount(apiUrl, accountId, localPart, domainId);
@@ -1318,7 +1320,26 @@ export class StalwartClient {
         tenantId,
         displayName,
         aliases,
+        canonicalAddress,
       );
+      const failureText = JSON.stringify(failure);
+      if (
+        canonicalAddress &&
+        aliases.length > 0 &&
+        failureText.includes('primaryKeyViolation') &&
+        failureText.includes('email')
+      ) {
+        return this.#ensureCastAccount(
+          apiUrl,
+          accountId,
+          localPart,
+          domainId,
+          tenantId,
+          displayName,
+          [],
+          canonicalAddress,
+        );
+      }
       throw new Error(`Stalwart account creation failed: ${JSON.stringify(failure)}`);
     }
     return {
