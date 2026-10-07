@@ -1,0 +1,30 @@
+name: Validate bitwise expression compatibility
+on:
+  pull_request:
+    branches: [develop, stage]
+    paths:
+      - crates/common/src/expr/**
+      - tests/src/smtp/lookup/expressions.rs
+      - .github/workflows/validate-bitwise-expression.yaml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bitwise-expression-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  expressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      RUST_MIN_STACK: '16777216'
+      STORE: RocksDb
+    steps:
+      - uses: actions/checkout@v6
+        with: {persist-credentials: false}
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libclang-dev pkg-config libssl-dev
+      - run: rustfmt --edition 2024 --check crates/common/src/expr/functions/misc.rs crates/common/src/expr/functions/mod.rs tests/src/smtp/lookup/expressions.rs
+      - run: cargo test --locked -p tests smtp::lookup::expressions::expressions -- --nocapture
