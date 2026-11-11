@@ -161,23 +161,96 @@ export class StalwartClient {
     return this.#castDkimRecord(await this.#session());
   }
 
+  /** Called only after Cast authorizes the workspace's existing custom-domain binding. */
+  async ensureCastMailDomain(input: { workspaceId: string; domain: string }): Promise<{
+    domain: string;
+    mxHost: string;
+    records: Array<{ type: 'MX' | 'TXT'; key: string; value: string; priority?: number }>;
+  }> {
+    const session = await this.#session();
+    const admin = primaryAccountId(session);
+    const tenant = await this.#ensureCastTenant(session.apiUrl, admin, input.workspaceId);
+    const domain = await this.#ensureCastDomain(
+      session.apiUrl,
+      admin,
+      input.domain,
+      tenant.id,
+      input.workspaceId,
+    );
+    let signatures = await this.#activeParentRsaSignatures(session.apiUrl, admin, domain.id);
+    if (signatures.length === 0) {
+      const response = await this.#call(session.apiUrl, admin, 'x:Domain/set', {
+        update: { [domain.id]: { dkimManagement: { '@type': 'Automatic' } } },
+      });
+      assertNoSetFailures(response, 'Custom-domain DKIM setup');
+      signatures = await this.#activeParentRsaSignatures(session.apiUrl, admin, domain.id);
+    }
+    // DKIM generation is an asynchronous Stalwart task. Return the other records
+    // while pending; Cast keeps mailbox readiness off until a public key exists.
+    if (signatures.length > 0) {
+      const freeze = await this.#call(session.apiUrl, admin, 'x:Domain/set', {
+        update: { [domain.id]: { dkimManagement: { '@type': 'Manual' } } },
+      });
+      assertNoSetFailures(freeze, 'Stable custom-domain DKIM management');
+      await this.#reloadSettings(session.apiUrl, admin);
+    }
+    const records: Array<{
+      type: 'MX' | 'TXT';
+      key: string;
+      value: string;
+      priority?: number;
+    }> = [
+      { type: 'MX', key: input.domain, value: this.#config.stalwartMailHost, priority: 10 },
+      { type: 'TXT', key: `_dmarc.${input.domain}`, value: 'v=DMARC1; p=quarantine' },
+      ...signatures.map((signature) => ({
+        type: 'TXT' as const,
+        key: `${requiredString(signature.selector, 'DKIM selector')}._domainkey.${input.domain}`,
+        value: `v=DKIM1; k=rsa; h=sha256; p=${requiredString(signature.publicKey, 'DKIM public key')}`,
+      })),
+    ];
+    return { domain: input.domain, mxHost: this.#config.stalwartMailHost, records };
+  }
+
   async ensureCastMailConfiguration(): Promise<void> {
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
-    const domainId = await this.#findDomain(
+    let domainId = await this.#findDomain(
       session.apiUrl,
       adminAccountId,
       this.#config.mailDomain,
     );
     if (!domainId) {
-      throw new Error(`Base mail domain ${this.#config.mailDomain} is not configured`);
+      const created = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
+        create: { platform: { name: this.#config.mailDomain, isEnabled: true,
+          certificateManagement: { '@type': 'Manual' }, dnsManagement: { '@type': 'Manual' },
+          dkimManagement: { '@type': 'Automatic' } } },
+      });
+      domainId = optionalId(asRecord(asRecord(created.created).platform).id)
+        ?? await this.#findDomain(session.apiUrl, adminAccountId, this.#config.mailDomain);
+      if (!domainId) throw new Error('Platform mail domain provisioning is pending');
     }
 
     const senderAuth = await this.#call(session.apiUrl, adminAccountId, 'x:SenderAuth/set', {
       update: {
         singleton: {
           dkimSignDomain: {
-            match: {},
+            match: {
+              '0': {
+                if: `is_local_domain(sender_domain) && !is_empty(authenticated_as) && !(${[...new Set([this.#config.mailDomain, 'agents.openagent.md', 'agents.stage.openagent.md', 'agents.visca.ai'])].map((base) => `sender_domain == '${base}' || ends_with(sender_domain, '.${base}')`).join(' || ')})`,
+                then: 'sender_domain',
+              },
+              ...Object.fromEntries(
+                ['agents.openagent.md', 'agents.stage.openagent.md', 'agents.visca.ai']
+                  .filter((base) => base !== this.#config.mailDomain)
+                  .map((base, index) => [
+                    String(index + 1),
+                    {
+                      if: `sender_domain == '${base}' || ends_with(sender_domain, '.${base}')`,
+                      then: `'${base}'`,
+                    },
+                  ]),
+              ),
+            },
             else: `'${this.#config.mailDomain}'`,
           },
           dkimStrict: true,
@@ -191,17 +264,19 @@ export class StalwartClient {
       adminAccountId,
       domainId,
     );
+    if (activeRsaSignatures.length === 0) {
+      const prepare = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
+        update: { [domainId]: { dkimManagement: { '@type': 'Automatic' } } },
+      });
+      assertNoSetFailures(prepare, 'Platform DKIM setup');
+      throw new Error('Platform DKIM generation is pending');
+    }
     if (activeRsaSignatures.length !== 1) {
       throw new Error(
         `Expected exactly one active RSA signer for ${this.#config.mailDomain}, found ${activeRsaSignatures.length}`,
       );
     }
-    const domain = await this.#registryObject(
-      session.apiUrl,
-      adminAccountId,
-      'Domain',
-      domainId,
-    );
+    const domain = await this.#registryObject(session.apiUrl, adminAccountId, 'Domain', domainId);
     if (asRecord(domain.dkimManagement)['@type'] === 'Automatic') {
       const manual = await this.#call(session.apiUrl, adminAccountId, 'x:Domain/set', {
         update: { [domainId]: { dkimManagement: { '@type': 'Manual' } } },
@@ -288,13 +363,9 @@ export class StalwartClient {
       const get = await this.#call(session.apiUrl, adminAccountId, 'x:Directory/get', {
         ids: directoryIds,
       });
-      directories = Array.isArray(get.list)
-        ? get.list.filter(isRecord)
-        : [];
+      directories = Array.isArray(get.list) ? get.list.filter(isRecord) : [];
       const existing = directories.find(
-        (entry) =>
-          entry['@type'] === 'Oidc' &&
-          entry.issuerUrl === this.#config.identityIssuer,
+        (entry) => entry['@type'] === 'Oidc' && entry.issuerUrl === this.#config.identityIssuer,
       );
       if (isRecord(existing) && typeof existing.id === 'string') {
         directoryId = existing.id;
@@ -331,9 +402,7 @@ export class StalwartClient {
       description: 'OpenAgent Identity',
       issuerUrl: this.#config.identityIssuer,
       requireAudience: this.#config.mailAudience,
-      requireScopes: Object.fromEntries(
-        this.#config.requiredScopes.map((scope) => [scope, true]),
-      ),
+      requireScopes: Object.fromEntries(this.#config.requiredScopes.map((scope) => [scope, true])),
       claimUsername: 'agent_email',
       claimName: 'agent_name',
     };
@@ -452,25 +521,19 @@ export class StalwartClient {
   }
 
   async ensureCastMailbox(input: CastMailboxEnsureInput): Promise<ProvisionedCastMailbox> {
-    const address = permanentMailboxAddress(
+    // Cast owns immutable identity. A default-domain change must not move an account.
+    const address = validatedPermanentAddress(
+      input.permanentAddress,
       input.agentId,
       input.workspaceId,
-      this.#config.mailDomain,
     );
-    if (input.permanentAddress.toLowerCase() !== address) {
-      throw new Error(`permanentAddress must be ${address}`);
-    }
 
-    const domain = workspaceDomain(input.workspaceId, this.#config.mailDomain);
-    const aliases = normalizeWorkspaceAliases(input.aliases, address, domain);
+    const domain = splitAddress(address)[1];
+    const aliases = normalizeWorkspaceAliases(input.aliases, address);
     const [localPart] = splitAddress(address);
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
-    const tenant = await this.#ensureCastTenant(
-      session.apiUrl,
-      adminAccountId,
-      input.workspaceId,
-    );
+    const tenant = await this.#ensureCastTenant(session.apiUrl, adminAccountId, input.workspaceId);
     const workspaceMailDomain = await this.#ensureCastDomain(
       session.apiUrl,
       adminAccountId,
@@ -478,6 +541,20 @@ export class StalwartClient {
       tenant.id,
       input.workspaceId,
     );
+    const aliasDomains = new Map<string, string>([[domain, workspaceMailDomain.id]]);
+    for (const alias of aliases) {
+      const aliasDomain = splitAddress(alias)[1];
+      if (!aliasDomains.has(aliasDomain)) {
+        const registered = await this.#ensureCastDomain(
+          session.apiUrl,
+          adminAccountId,
+          aliasDomain,
+          tenant.id,
+          input.workspaceId,
+        );
+        aliasDomains.set(aliasDomain, registered.id);
+      }
+    }
     const mailbox = await this.#ensureCastAccount(
       session.apiUrl,
       adminAccountId,
@@ -487,17 +564,22 @@ export class StalwartClient {
       input.displayName,
       aliases,
       address,
+      aliasDomains,
     );
     const legacyCleanup: LegacyMailboxCleanupResult[] = [];
-    for (const legacyBaseDomain of this.#config.legacyAgentMailDomains) {
-      legacyCleanup.push(await this.#removeLegacyCastMailbox({
-        apiUrl: session.apiUrl,
-        adminAccountId,
-        tenantId: tenant.id,
-        workspaceId: input.workspaceId,
-        agentId: input.agentId,
-        legacyBaseDomain,
-      }));
+    for (const legacyBaseDomain of this.#config.legacyAgentMailDomains.filter(
+      (base) => ![address, ...aliases].some((alias) => splitAddress(alias)[1].endsWith(`.${base}`)),
+    )) {
+      legacyCleanup.push(
+        await this.#removeLegacyCastMailbox({
+          apiUrl: session.apiUrl,
+          adminAccountId,
+          tenantId: tenant.id,
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          legacyBaseDomain,
+        }),
+      );
     }
     await this.#invalidateCaches(session.apiUrl, adminAccountId);
     return {
@@ -515,14 +597,12 @@ export class StalwartClient {
   }
 
   async retireCastMailbox(input: CastMailboxRetireInput): Promise<RetiredCastMailbox> {
-    const address = permanentMailboxAddress(
+    // Cast owns immutable identity. A default-domain change must not move an account.
+    const address = validatedPermanentAddress(
+      input.permanentAddress,
       input.agentId,
       input.workspaceId,
-      this.#config.mailDomain,
     );
-    if (input.permanentAddress.toLowerCase() !== address) {
-      throw new Error(`permanentAddress must be ${address}`);
-    }
 
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
@@ -533,24 +613,13 @@ export class StalwartClient {
     );
     if (!tenantId) return { address, retired: false };
 
-    const domain = workspaceDomain(input.workspaceId, this.#config.mailDomain);
+    const domain = splitAddress(address)[1];
     const domainId = await this.#findDomain(session.apiUrl, adminAccountId, domain);
     if (!domainId) return { address, retired: false };
-    await this.#assertObjectTenant(
-      session.apiUrl,
-      adminAccountId,
-      'Domain',
-      domainId,
-      tenantId,
-    );
+    await this.#assertObjectTenant(session.apiUrl, adminAccountId, 'Domain', domainId, tenantId);
 
     const [localPart] = splitAddress(address);
-    const accountId = await this.#findAccount(
-      session.apiUrl,
-      adminAccountId,
-      localPart,
-      domainId,
-    );
+    const accountId = await this.#findAccount(session.apiUrl, adminAccountId, localPart, domainId);
     if (!accountId) return { address, retired: false };
     const account = await this.#registryObject(
       session.apiUrl,
@@ -582,13 +651,11 @@ export class StalwartClient {
   }
 
   async sendCastMailbox(input: CastMailboxSendInput): Promise<SentCastMailboxMessage> {
-    const canonicalAddress = permanentMailboxAddress(
-      input.agentId,
-      input.workspaceId,
-      this.#config.mailDomain,
-    );
+    const canonicalAddress = input.permanentAddress
+      ? validatedPermanentAddress(input.permanentAddress, input.agentId, input.workspaceId)
+      : permanentMailboxAddress(input.agentId, input.workspaceId, this.#config.mailDomain);
     const from = input.from.address.toLowerCase();
-    const domain = workspaceDomain(input.workspaceId, this.#config.mailDomain);
+    const domain = splitAddress(canonicalAddress)[1];
     const session = await this.#session();
     const adminAccountId = primaryAccountId(session);
     const tenantId = await this.#findTenant(
@@ -599,20 +666,9 @@ export class StalwartClient {
     if (!tenantId) throw new Error('Cast workspace mailbox tenant is not provisioned');
     const domainId = await this.#findDomain(session.apiUrl, adminAccountId, domain);
     if (!domainId) throw new Error('Cast workspace mail domain is not provisioned');
-    await this.#assertObjectTenant(
-      session.apiUrl,
-      adminAccountId,
-      'Domain',
-      domainId,
-      tenantId,
-    );
+    await this.#assertObjectTenant(session.apiUrl, adminAccountId, 'Domain', domainId, tenantId);
     const [localPart] = splitAddress(canonicalAddress);
-    const accountId = await this.#findAccount(
-      session.apiUrl,
-      adminAccountId,
-      localPart,
-      domainId,
-    );
+    const accountId = await this.#findAccount(session.apiUrl, adminAccountId, localPart, domainId);
     if (!accountId) throw new Error('Cast agent mailbox is not provisioned');
     const account = await this.#registryObject(
       session.apiUrl,
@@ -621,7 +677,21 @@ export class StalwartClient {
       accountId,
     );
     assertMemberTenant(account, tenantId, 'account');
-    const allowedSenders = accountAddresses(account, canonicalAddress, domain);
+    const aliasDomains = new Map<string, string>([[domainId, domain]]);
+    for (const alias of Object.values(asRecord(account.aliases))) {
+      const aliasDomainId = optionalId(asRecord(alias).domainId);
+      if (aliasDomainId && !aliasDomains.has(aliasDomainId)) {
+        const registered = await this.#registryObject(
+          session.apiUrl,
+          adminAccountId,
+          'Domain',
+          aliasDomainId,
+        );
+        assertMemberTenant(registered, tenantId, 'sender domain');
+        aliasDomains.set(aliasDomainId, requiredString(registered.name, 'sender domain name'));
+      }
+    }
+    const allowedSenders = accountAddresses(account, canonicalAddress, domain, aliasDomains);
     if (!allowedSenders.has(from)) {
       throw new Error(`Sender ${input.from.address} is not an enabled alias of this Cast agent`);
     }
@@ -640,11 +710,7 @@ export class StalwartClient {
     if (!identity) throw new Error(`Stalwart has no enabled sending identity for ${from}`);
     const identityId = requiredId(identity.id, 'sending identity id');
 
-    const draftsMailboxId = await this.#draftsMailboxId(
-      session.apiUrl,
-      adminAccountId,
-      accountId,
-    );
+    const draftsMailboxId = await this.#draftsMailboxId(session.apiUrl, adminAccountId, accountId);
     const rawMessage = buildRfc5322Message(input, domain);
     const blobId = await this.#uploadMessage(session, accountId, rawMessage.bytes);
     const imported = await this.#standardCall(
@@ -657,7 +723,7 @@ export class StalwartClient {
           outbound: {
             blobId,
             mailboxIds: { [draftsMailboxId]: true },
-            keywords: { '$draft': true },
+            keywords: { $draft: true },
             receivedAt: new Date().toISOString(),
           },
         },
@@ -666,9 +732,9 @@ export class StalwartClient {
     );
     assertNoSetFailures(imported, 'Stalwart email import');
     const emailId = createdObjectId(imported, 'outbound', 'imported email id');
-    const recipients = [...new Set([...input.to, ...input.cc, ...input.bcc].map((email) => (
-      email.toLowerCase()
-    )))];
+    const recipients = [
+      ...new Set([...input.to, ...input.cc, ...input.bcc].map((email) => email.toLowerCase())),
+    ];
     const submitted = await this.#standardCall(
       session.apiUrl,
       adminAccountId,
@@ -827,10 +893,7 @@ export class StalwartClient {
     if (!domain) return 'ignored';
     const localPart = requiredString(account.name, 'inbound mailbox local part');
     const domainName = requiredString(domain.name, 'inbound mailbox domain name');
-    if (
-      !isCastAgentLocalPart(localPart) ||
-      !isCastWorkspaceDomain(domainName, this.#config.mailDomain)
-    ) {
+    if (!isCastAgentLocalPart(localPart) || !/^wsp-[a-z0-9]+\.[a-z0-9.-]+$/u.test(domainName)) {
       return 'ignored';
     }
     const accountTenantId = optionalId(account.memberTenantId);
@@ -858,9 +921,7 @@ export class StalwartClient {
         'agent-mail-webhook-auth': targetSecret,
         'agent-mail-recipient': recipient,
         'agent-mail-source-id': input.sourceId,
-        ...(isSafeHeaderValue(input.messageId)
-          ? { 'agent-mail-message-id': input.messageId }
-          : {}),
+        ...(isSafeHeaderValue(input.messageId) ? { 'agent-mail-message-id': input.messageId } : {}),
       },
       body: raw,
       signal: AbortSignal.timeout(30_000),
@@ -915,33 +976,28 @@ export class StalwartClient {
     if (!tenantId) throw new Error('Cast workspace mailbox tenant is not provisioned');
     const domain = workspaceDomain(workspaceId, this.#config.mailDomain);
     const domainId = await this.#findDomain(session.apiUrl, adminAccountId, domain);
-    if (!domainId) throw new Error('Cast workspace mail domain is not provisioned');
-    await this.#assertObjectTenant(
-      session.apiUrl,
-      adminAccountId,
-      'Domain',
-      domainId,
-      tenantId,
+    if (domainId)
+      await this.#assertObjectTenant(session.apiUrl, adminAccountId, 'Domain', domainId, tenantId);
+    const [localPart] = splitAddress(
+      permanentMailboxAddress(agentId, workspaceId, this.#config.mailDomain),
     );
-    const [localPart] = splitAddress(permanentMailboxAddress(
-      agentId,
-      workspaceId,
-      this.#config.mailDomain,
-    ));
-    const accountId = await this.#findAccount(
-      session.apiUrl,
-      adminAccountId,
-      localPart,
-      domainId,
-    );
+    let accountId = domainId
+      ? await this.#findAccount(session.apiUrl, adminAccountId, localPart, domainId)
+      : undefined;
+    if (!accountId) {
+      const result = await this.#call(session.apiUrl, adminAccountId, 'x:Account/query', {
+        filter: {
+          operator: 'AND',
+          conditions: [{ name: localPart }, { memberTenantId: tenantId }],
+        },
+        limit: 2,
+      });
+      const ids = stringIds(result.ids);
+      if (ids.length > 1) throw new Error('Ambiguous Cast agent mailbox');
+      accountId = ids[0];
+    }
     if (!accountId) throw new Error('Cast agent mailbox is not provisioned');
-    await this.#assertObjectTenant(
-      session.apiUrl,
-      adminAccountId,
-      'Account',
-      accountId,
-      tenantId,
-    );
+    await this.#assertObjectTenant(session.apiUrl, adminAccountId, 'Account', accountId, tenantId);
     return { session, adminAccountId, accountId };
   }
 
@@ -1082,12 +1138,9 @@ export class StalwartClient {
     );
     let domainRemoved = false;
     if (remainingAccounts.length === 0) {
-      const domainResponse = await this.#call(
-        input.apiUrl,
-        input.adminAccountId,
-        'x:Domain/set',
-        { destroy: [domainId] },
-      );
+      const domainResponse = await this.#call(input.apiUrl, input.adminAccountId, 'x:Domain/set', {
+        destroy: [domainId],
+      });
       assertNoSetFailures(domainResponse, 'Empty legacy workspace domain removal');
       domainRemoved = true;
     }
@@ -1128,7 +1181,10 @@ export class StalwartClient {
     const signDomain = asRecord(senderAuth?.dkimSignDomain);
     if (
       senderAuth?.dkimStrict !== true ||
-      signDomain.else !== `'${this.#config.mailDomain}'`
+      (signDomain.else !== `'${this.#config.mailDomain}'` && !Object.values(asRecord(signDomain.match)).some((branch) => {
+        const rule = asRecord(branch);
+        return rule.then === `'${this.#config.mailDomain}'` && typeof rule.if === 'string' && rule.if.includes(`sender_domain == '${this.#config.mailDomain}'`);
+      }))
     ) return undefined;
 
     const publicKey = requiredString(signature.publicKey, 'DKIM public key');
@@ -1267,21 +1323,28 @@ export class StalwartClient {
     displayName: string,
     aliases: string[],
     canonicalAddress?: string,
+    aliasDomains?: Map<string, string>,
   ): Promise<{ id: string; created: boolean }> {
-    const aliasObjects = emailAliasObjects(aliases, domainId);
+    const aliasObjects = emailAliasObjects(aliases, domainId, aliasDomains);
     const existingId = await this.#findAccount(apiUrl, accountId, localPart, domainId);
     if (existingId) {
-      const existing = await this.#registryObject(
-        apiUrl,
-        accountId,
-        'Account',
-        existingId,
-      );
+      const existing = await this.#registryObject(apiUrl, accountId, 'Account', existingId);
       assertMemberTenant(existing, tenantId, 'account');
+      const retained = new Map<string, unknown>();
+      for (const alias of [
+        ...Object.values(asRecord(existing.aliases)),
+        ...Object.values(aliasObjects),
+      ]) {
+        const value = asRecord(alias);
+        retained.set(`${value.domainId}:${value.name}`, value);
+      }
+      const mergedAliases = Object.fromEntries(
+        [...retained.values()].map((value, index) => [String(index), value]),
+      );
       const response = await this.#call(apiUrl, accountId, 'x:Account/set', {
         update: {
           [existingId]: {
-            aliases: aliasObjects,
+            aliases: mergedAliases,
             description: displayName,
             quotas: {},
           },
@@ -1312,23 +1375,7 @@ export class StalwartClient {
     const failure = setFailures(response);
     if (Object.keys(failure).length > 0) {
       const racedId = await this.#findAccount(apiUrl, accountId, localPart, domainId);
-      if (racedId) return this.#ensureCastAccount(
-        apiUrl,
-        accountId,
-        localPart,
-        domainId,
-        tenantId,
-        displayName,
-        aliases,
-        canonicalAddress,
-      );
-      const failureText = JSON.stringify(failure);
-      if (
-        canonicalAddress &&
-        aliases.length > 0 &&
-        failureText.includes('primaryKeyViolation') &&
-        failureText.includes('email')
-      ) {
+      if (racedId)
         return this.#ensureCastAccount(
           apiUrl,
           accountId,
@@ -1336,10 +1383,11 @@ export class StalwartClient {
           domainId,
           tenantId,
           displayName,
-          [],
+          aliases,
           canonicalAddress,
+          aliasDomains,
         );
-      }
+      // Never report success for an account created without its reserved aliases.
       throw new Error(`Stalwart account creation failed: ${JSON.stringify(failure)}`);
     }
     return {
@@ -1769,18 +1817,14 @@ function assertMemberTenant(
   }
 }
 
-function normalizeWorkspaceAliases(
-  values: readonly string[],
-  permanentAddress: string,
-  workspaceMailDomain: string,
-): string[] {
+function normalizeWorkspaceAliases(values: readonly string[], permanentAddress: string): string[] {
   const aliases = new Set<string>();
   for (const value of values) {
     const normalized = value.toLowerCase();
     const [localPart, domain] = splitAddress(normalized);
     validateLocalPart(localPart);
-    if (domain !== workspaceMailDomain) {
-      throw new Error(`Alias ${value} must use workspace domain ${workspaceMailDomain}`);
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]+$/u.test(domain)) {
+      throw new Error(`Invalid alias domain ${domain}`);
     }
     if (normalized !== permanentAddress) aliases.add(normalized);
   }
@@ -1799,16 +1843,22 @@ function validateLocalPart(localPart: string): void {
 function emailAliasObjects(
   aliases: readonly string[],
   domainId: string,
+  aliasDomains?: Map<string, string>,
 ): Record<string, unknown> {
-  return Object.fromEntries(aliases.map((address, index) => {
-    const [name] = splitAddress(address);
-    return [String(index), {
-      enabled: true,
-      name,
-      domainId,
-      description: 'Cast agent alias',
-    }];
-  }));
+  return Object.fromEntries(
+    aliases.map((address, index) => {
+      const [name, domain] = splitAddress(address);
+      return [
+        String(index),
+        {
+          enabled: true,
+          name,
+          domainId: aliasDomains?.get(domain) ?? domainId,
+          description: 'Cast agent alias',
+        },
+      ];
+    }),
+  );
 }
 
 function disableAliases(value: unknown): Record<string, unknown> {
@@ -1823,12 +1873,14 @@ function accountAddresses(
   account: Record<string, unknown>,
   canonicalAddress: string,
   domain: string,
+  aliasDomains?: Map<string, string>,
 ): Set<string> {
   const addresses = new Set([canonicalAddress]);
   for (const alias of Object.values(asRecord(account.aliases))) {
     const object = asRecord(alias);
     if (object.enabled !== true || typeof object.name !== 'string') continue;
-    addresses.add(`${object.name.toLowerCase()}@${domain}`);
+    const aliasDomain = aliasDomains?.get(String(object.domainId)) ?? domain;
+    addresses.add(`${object.name.toLowerCase()}@${aliasDomain}`);
   }
   return addresses;
 }
@@ -1952,4 +2004,20 @@ function calendarEventObject(event: CastCalendarEvent): Record<string, unknown> 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validatedPermanentAddress(value: string, agentId: string, workspaceId: string): string {
+  const address = value.toLowerCase();
+  const [localPart, domain] = splitAddress(address);
+  const expected = permanentMailboxAddress(agentId, workspaceId, 'example.test');
+  const [expectedLocal, expectedDomain] = splitAddress(expected);
+  const workspacePrefix = expectedDomain.slice(0, -'example.test'.length);
+  if (
+    localPart !== expectedLocal ||
+    !domain.startsWith(workspacePrefix) ||
+    !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]+$/u.test(domain)
+  ) {
+    throw new Error(`permanentAddress must belong to the immutable agent and workspace`);
+  }
+  return address;
 }

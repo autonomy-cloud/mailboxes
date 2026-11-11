@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "test": "vitest run src",
     "test:live": "node scripts/live-e2e.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:cast-domains": "node scripts/cast-domain-e2e.mjs"
   },
   "dependencies": {
     "jose": "^6.1.2",
