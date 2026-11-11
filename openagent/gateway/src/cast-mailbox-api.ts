@@ -16,6 +16,11 @@ export const castMailboxEnsureSchema = z.object({
   aliases: z.array(emailAddress).max(64).default([]),
 }).strict();
 
+export const castMailDomainSchema = z.object({
+  workspaceId: immutableId,
+  domain: z.string().trim().toLowerCase().max(253).regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]+$/u),
+}).strict();
+
 export const castMailboxRetireSchema = z.object({
   workspaceId: immutableId,
   agentId: immutableId,
@@ -42,6 +47,7 @@ const attachmentSchema = z.object({
 }).strict();
 
 export const castMailboxSendSchema = z.object({
+  permanentAddress: emailAddress.optional(),
   workspaceId: immutableId,
   agentId: immutableId,
   from: sender,

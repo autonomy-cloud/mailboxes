@@ -7,6 +7,7 @@ import {
   castCalendarEventDeleteSchema,
   castCalendarEventUpdateSchema,
   castMailboxEnsureSchema,
+  castMailDomainSchema,
   castMailboxRetireSchema,
   castMailboxSendSchema,
   isValidCastServiceToken,
@@ -101,6 +102,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
         tls: 'implicit',
       },
     });
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/cast/mail-domains/ensure') {
+    if (!authorizeCastRequest(request, response)) return;
+    const input = await parseBody(request, castMailDomainSchema);
+    json(response, 200, await stalwart.ensureCastMailDomain(input));
     return;
   }
   if (request.method === 'GET' && url.pathname === '/v1/cast/mail/dkim') {

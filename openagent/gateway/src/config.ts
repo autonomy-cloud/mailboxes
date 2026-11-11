@@ -7,7 +7,7 @@ const environmentSchema = z.object({
   OPENAGENT_IDENTITY_ISSUER: url.optional(),
   OPENAGENT_IDENTITY_JWKS_URL: url.optional(),
   OPENAGENT_MAIL_AUDIENCE: url.default('https://mail.openagent.md'),
-  OPENAGENT_MAIL_DOMAIN: z.string().trim().min(3).default('agents.openagent.md'),
+  OPENAGENT_MAIL_DOMAIN: z.string().trim().min(3).default('agents.visca.ai'),
   LEGACY_AGENT_MAIL_DOMAINS: z.string().default(''),
   OPENAGENT_REQUIRED_SCOPES: z.string().default('mail:read'),
   CAST_MAILBOX_GATEWAY_TOKEN: z.string().min(32).optional(),

@@ -31,11 +31,11 @@ describe('gateway configuration', () => {
   it('normalizes and validates the explicit legacy cleanup allowlist', () => {
     expect(loadConfig({
       ...castNativeEnvironment,
-      LEGACY_AGENT_MAIL_DOMAINS: 'Agents.Visca.AI, legacy.example.com agents.visca.ai',
-    }).legacyAgentMailDomains).toEqual(['agents.visca.ai', 'legacy.example.com']);
+      LEGACY_AGENT_MAIL_DOMAINS: 'Agents.Old.Example, legacy.example.com agents.old.example',
+    }).legacyAgentMailDomains).toEqual(['agents.old.example', 'legacy.example.com']);
     expect(() => loadConfig({
       ...castNativeEnvironment,
-      LEGACY_AGENT_MAIL_DOMAINS: 'agents.openagent.md',
+      LEGACY_AGENT_MAIL_DOMAINS: 'agents.visca.ai',
     })).toThrow('must not include OPENAGENT_MAIL_DOMAIN');
     expect(() => loadConfig({
       ...castNativeEnvironment,

@@ -212,7 +212,10 @@ describe('StalwartClient Cast-native provisioning', () => {
       expect.objectContaining({
         update: {
           singleton: {
-            dkimSignDomain: { match: {}, else: "'agents.openagent.md'" },
+            dkimSignDomain: expect.objectContaining({
+              match: expect.objectContaining({ '0': expect.objectContaining({ then: 'sender_domain' }) }),
+              else: "'agents.openagent.md'",
+            }),
             dkimStrict: true,
           },
         },
