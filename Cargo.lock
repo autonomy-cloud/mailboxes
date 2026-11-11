@@ -5156,7 +5156,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -5169,7 +5169,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry-http"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -5181,7 +5181,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry-otlp"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 dependencies = [
  "http 1.5.0",
  "opentelemetry",
@@ -5199,7 +5199,7 @@ dependencies = [
 [[package]]
 name = "opentelemetry-proto"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
@@ -5211,12 +5211,12 @@ dependencies = [
 [[package]]
 name = "opentelemetry-semantic-conventions"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 
 [[package]]
 name = "opentelemetry_sdk"
 version = "0.31.0"
-source = "git+https://github.com/stalwartlabs/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
+source = "git+https://github.com/autonomy-cloud/opentelemetry-rust#274b4d324794280ce6f4def095a3428197a9e6e3"
 dependencies = [
  "futures-channel",
  "futures-executor",
