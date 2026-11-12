@@ -138,6 +138,33 @@ jobs:
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
         run: cosign sign --yes "${{ matrix.image }}@${DIGEST}"
+      # Deploy lane (autonomy-cloud/lrai docs/deploy-only-fast-lane.md, section 5):
+      # tell lrai this signed digest exists. lrai re-verifies the signature
+      # before proposing anything. The token can only dispatch lrai workflows
+      # (actions: write), never push code. Inert until LRAI_DISPATCH_APP_ID is set.
+      - name: Mint lrai deploy-lane dispatch token
+        id: lrai-dispatch
+        if: vars.LRAI_DISPATCH_APP_ID != '' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/stage')
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.LRAI_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.LRAI_DISPATCH_APP_PRIVATE_KEY }}
+          owner: autonomy-cloud
+          repositories: lrai
+          permission-actions: write
+      - name: Announce the signed image to the lrai deploy lane
+        if: steps.lrai-dispatch.outputs.token != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.lrai-dispatch.outputs.token }}
+          IMAGE_REPOSITORY: ${{ matrix.image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh workflow run deploy-lane-propose.yaml --repo autonomy-cloud/lrai --ref main \
+            -f repository="$IMAGE_REPOSITORY" -f digest="$IMAGE_DIGEST"
       - name: Scan immutable stage candidate
         if: github.ref_name == 'stage'
         uses: aquasecurity/trivy-action@v0.36.0
@@ -195,12 +222,41 @@ jobs:
             "${source_ref}"
       - uses: sigstore/cosign-installer@v3.9.2
       - name: Sign the promoted immutable digest
+        id: sign
         env:
           IMAGE: ${{ matrix.image }}
         run: |
           set -euo pipefail
           digest="$(docker buildx imagetools inspect "${IMAGE}:release" --format '{{json .Manifest}}' | jq -r .digest)"
           cosign sign --yes "${IMAGE}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+      # Deploy lane (autonomy-cloud/lrai docs/deploy-only-fast-lane.md, section 5):
+      # tell lrai this signed digest exists. lrai re-verifies the signature
+      # before proposing anything. The token can only dispatch lrai workflows
+      # (actions: write), never push code. Inert until LRAI_DISPATCH_APP_ID is set.
+      - name: Mint lrai deploy-lane dispatch token
+        id: lrai-dispatch
+        if: vars.LRAI_DISPATCH_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.LRAI_DISPATCH_APP_ID }}
+          private-key: ${{ secrets.LRAI_DISPATCH_APP_PRIVATE_KEY }}
+          owner: autonomy-cloud
+          repositories: lrai
+          permission-actions: write
+      - name: Announce the signed image to the lrai deploy lane
+        if: steps.lrai-dispatch.outputs.token != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.lrai-dispatch.outputs.token }}
+          IMAGE_REPOSITORY: ${{ matrix.image }}
+          IMAGE_DIGEST: ${{ steps.sign.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh workflow run deploy-lane-propose.yaml --repo autonomy-cloud/lrai --ref main \
+            -f repository="$IMAGE_REPOSITORY" -f digest="$IMAGE_DIGEST"
 
   promote-lrai-stage:
     if: github.event_name == 'push' && github.ref == 'refs/heads/stage'
