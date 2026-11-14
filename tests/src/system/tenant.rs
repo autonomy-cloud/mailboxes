@@ -38,9 +38,10 @@ pub async fn test(test: &mut TestServer) {
     let mut tenant_x_ids = AHashMap::new();
     let mut tenant_y_ids = AHashMap::new();
     for (tenant_ids, name) in [(&mut tenant_x_ids, "x"), (&mut tenant_y_ids, "y")] {
+        let tenant_name = format!("Tenant {name}");
         let tenant_id = admin_system
             .registry_create_object(Tenant {
-                name: format!("Tenant {}", name),
+                name: tenant_name.clone(),
                 quotas: VecMap::from_iter([
                     (TenantStorageQuota::MaxAccounts, 2),
                     (TenantStorageQuota::MaxGroups, 1),
@@ -55,6 +56,24 @@ pub async fn test(test: &mut TestServer) {
                 ..Default::default()
             })
             .await;
+
+        assert_eq!(
+            admin_system
+                .registry_query_ids(
+                    ObjectType::Tenant,
+                    [(Property::Name, tenant_name.as_str())],
+                    Vec::<Property>::new(),
+                )
+                .await,
+            vec![tenant_id]
+        );
+        admin_system
+            .registry_create_object_expect_err(Tenant {
+                name: tenant_name,
+                ..Default::default()
+            })
+            .await
+            .assert_type(SetErrorType::PrimaryKeyViolation);
 
         let domain_id = admin_system
             .registry_create_object(Domain {

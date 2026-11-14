@@ -12,7 +12,8 @@ ENV NODE_ENV=production
 # corepack, and Yarn add no runtime capability and have repeatedly carried
 # HIGH/CRITICAL archive and parser CVEs, so omit those package-manager trees
 # from the production image instead of suppressing the scanner findings.
-RUN rm -rf \
+RUN apk upgrade --no-cache && \
+    rm -rf \
     /usr/local/lib/node_modules/npm \
     /usr/local/lib/node_modules/corepack \
     /opt/yarn-* && \

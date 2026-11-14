@@ -43972,6 +43972,7 @@ impl ObjectImpl for Tenant {
     }
 
     fn index<'x>(&'x self, i: &mut IndexBuilder<'x>) {
+        i.unique(Property::Name, &self.name);
         i.text(Property::Text, &self.name);
         self.roles.index(i);
     }

@@ -706,6 +706,7 @@ impl EmailIngest for Server {
             }),
             SpanId = params.session_id,
             AccountId = account_id,
+            Id = Id::from_parts(thread_id, document_id).to_string(),
             DocumentId = document_id,
             MailboxId = mailbox_ids_event,
             BlobId = blob_hash.to_hex(),

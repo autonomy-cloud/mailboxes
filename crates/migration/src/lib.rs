@@ -6,6 +6,7 @@
 
 #![warn(clippy::large_futures)]
 
+use crate::tenant_name_index::migrate_tenant_name_index;
 use crate::v016::migrate_v0_16;
 use common::{DATABASE_SCHEMA_VERSION, Server};
 use store::{
@@ -16,6 +17,7 @@ use store::{
 use trc::AddContext;
 
 pub mod destroy;
+pub mod tenant_name_index;
 pub mod v016;
 
 pub async fn try_migrate(server: &Server) -> trc::Result<()> {
@@ -46,6 +48,14 @@ pub async fn try_migrate(server: &Server) -> trc::Result<()> {
                     "https://github.com/stalwartlabs/stalwart/blob/main/UPGRADING/v0_16.md"
                 ));
             }
+
+            migrate_v0_16(server).await?;
+            migrate_tenant_name_index(server.registry()).await?;
+            return write_schema_version(server).await;
+        }
+        Some(6) => {
+            migrate_tenant_name_index(server.registry()).await?;
+            return write_schema_version(server).await;
         }
 
         Some(version) => {
@@ -67,7 +77,7 @@ pub async fn try_migrate(server: &Server) -> trc::Result<()> {
         }
     }
 
-    migrate_v0_16(server).await?;
+    migrate_tenant_name_index(server.registry()).await?;
     write_schema_version(server).await
 }
 
