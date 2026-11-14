@@ -98,6 +98,13 @@ export type CastDkimRecord = {
   dnsPublished: boolean;
 };
 
+export class ExternalMailDisabledError extends Error {
+  constructor() {
+    super('External email sending is disabled. Only local recipients are allowed.');
+    this.name = 'ExternalMailDisabledError';
+  }
+}
+
 export class StalwartClient {
   readonly #config: GatewayConfig;
   readonly #fetch: typeof fetch;
@@ -694,6 +701,18 @@ export class StalwartClient {
     const allowedSenders = accountAddresses(account, canonicalAddress, domain, aliasDomains);
     if (!allowedSenders.has(from)) {
       throw new Error(`Sender ${input.from.address} is not an enabled alias of this Cast agent`);
+    }
+
+    // Reject every external envelope recipient before uploading or queueing mail.
+    if (!this.#config.mailPublicDeliveryConfigured) {
+      const recipientDomains = new Set(
+        [...input.to, ...input.cc, ...input.bcc].map((address) => splitAddress(address.toLowerCase())[1]),
+      );
+      for (const recipientDomain of recipientDomains) {
+        if (!await this.#findDomain(session.apiUrl, adminAccountId, recipientDomain)) {
+          throw new ExternalMailDisabledError();
+        }
+      }
     }
 
     const identities = await this.#standardCall(

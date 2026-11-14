@@ -53,6 +53,18 @@ try {
   receiver = await api('/v1/cast/mailboxes/ensure', b, [200, 201]);
   assert(first.accountId && receiver.accountId);
   console.log('PASS: preserved old permanent address and provisioned readable aliases');
+  for (const field of ['to', 'cc', 'bcc']) {
+    const rejection = await api('/v1/cast/mailboxes/send', {
+      workspaceId, agentId: a.agentId, permanentAddress: a.permanentAddress,
+      from: { address: `sales@${domain}` },
+      to: field === 'to' ? [] : [`support@${domain}`],
+      [field]: ['recipient@delivery-disabled.invalid'],
+      subject: 'External delivery must remain disabled', text: 'Must not queue',
+      messageId: `<disabled-${field}-${fixture}@${domain}>`,
+    }, 403);
+    assert.equal(rejection.error, 'external_delivery_disabled');
+  }
+  console.log('PASS: external To/Cc/Bcc rejected while local recipients remain enabled');
   await api(
     '/v1/cast/mailboxes/send',
     {

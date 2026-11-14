@@ -82,6 +82,13 @@ configuration is exact, the public TXT record matches, and an operator sets
 `MAIL_PUBLIC_DELIVERY_CONFIGURED=true` after an external delivery probe confirms
 the received `DKIM-Signature` uses `d=<OPENAGENT_MAIL_DOMAIN>; s=cast1`.
 
+With `MAIL_PUBLIC_DELIVERY_CONFIGURED=false` (the default), native agent
+submission permits only recipient domains registered in Stalwart. Any external
+To, Cc or Bcc recipient rejects the entire request with HTTP 403 and
+`external_delivery_disabled`, before upload or submission. Internal mail and
+mailbox/alias provisioning remain available. Keep this flag false during the
+domain-only rollout; the hosted mail policy also denies external SMTP egress.
+
 Calendar event projection uses the same bearer token and tenant-bound mailbox:
 
 ```http
