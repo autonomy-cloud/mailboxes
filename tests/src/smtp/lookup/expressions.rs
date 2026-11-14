@@ -16,6 +16,10 @@ use smtp::queue::RecipientDomain;
 use std::time::{Duration, Instant};
 
 const TESTS: &[(&str, &str)] = &[
+    (
+        "bit_and(254, 16) + '-' + bit_and(254, 1) + '-' + bit_and(80, 64) + '-' + bit_and(255, 128)",
+        "16-0-64-128",
+    ),
     ("dns_query(rcpt_domain, 'mx')[0]", "mx.foobar.org"),
     (
         "key_get('sql', 'hello') + '-' + key_exists('sql', 'hello') + '-' + key_set('sql', 'hello', 'world') + '-' + key_get('sql', 'hello') + '-' + key_exists('sql', 'hello')",

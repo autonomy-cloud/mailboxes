@@ -7,6 +7,7 @@ import {
   castCalendarEventDeleteSchema,
   castCalendarEventUpdateSchema,
   castMailboxEnsureSchema,
+  castMailDomainSchema,
   castMailboxRetireSchema,
   castMailboxSendSchema,
   isValidCastServiceToken,
@@ -14,7 +15,7 @@ import {
 import { loadConfig } from './config.js';
 import { OpenAgentTokenVerifier } from './openagent-token-verifier.js';
 import { initializeStalwart } from './startup.js';
-import { StalwartClient } from './stalwart-client.js';
+import { ExternalMailDisabledError, StalwartClient } from './stalwart-client.js';
 import { telemetryAccountId } from './telemetry.js';
 
 const config = loadConfig();
@@ -28,10 +29,11 @@ const server = createServer(async (request, response) => {
     await route(request, response);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    const status = error instanceof ClientRequestError ? error.status : 500;
+    const externalMailDisabled = error instanceof ExternalMailDisabledError;
+    const status = externalMailDisabled ? 403 : error instanceof ClientRequestError ? error.status : 500;
     console.error(JSON.stringify({ level: status >= 500 ? 'error' : 'warn', message, path: request.url }));
     json(response, status, {
-      error: status >= 500 ? 'internal_error' : 'invalid_request',
+      error: externalMailDisabled ? 'external_delivery_disabled' : status >= 500 ? 'internal_error' : 'invalid_request',
       message: status >= 500 ? 'Mailbox operation failed' : message,
     });
   }
@@ -101,6 +103,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
         tls: 'implicit',
       },
     });
+    return;
+  }
+  if (request.method === 'POST' && url.pathname === '/v1/cast/mail-domains/ensure') {
+    if (!authorizeCastRequest(request, response)) return;
+    const input = await parseBody(request, castMailDomainSchema);
+    json(response, 200, await stalwart.ensureCastMailDomain(input));
     return;
   }
   if (request.method === 'GET' && url.pathname === '/v1/cast/mail/dkim') {

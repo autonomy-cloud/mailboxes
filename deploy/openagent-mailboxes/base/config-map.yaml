@@ -7,7 +7,7 @@ data:
   OPENAGENT_IDENTITY_ISSUER: https://id.openagent.md/oidc
   OPENAGENT_IDENTITY_JWKS_URL: https://id.openagent.md/oidc/jwks
   OPENAGENT_MAIL_AUDIENCE: https://mail.openagent.md
-  OPENAGENT_MAIL_DOMAIN: agents.openagent.md
+  OPENAGENT_MAIL_DOMAIN: agents.visca.ai
   OPENAGENT_REQUIRED_SCOPES: mail:read
   STALWART_BASE_URL: http://stalwart:8080
   STALWART_PUBLIC_URL: https://inbox.openagent.md

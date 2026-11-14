@@ -212,7 +212,10 @@ describe('StalwartClient Cast-native provisioning', () => {
       expect.objectContaining({
         update: {
           singleton: {
-            dkimSignDomain: { match: {}, else: "'agents.openagent.md'" },
+            dkimSignDomain: expect.objectContaining({
+              match: expect.objectContaining({ '0': expect.objectContaining({ then: 'sender_domain' }) }),
+              else: "'agents.openagent.md'",
+            }),
             dkimStrict: true,
           },
         },
@@ -573,6 +576,40 @@ describe('StalwartClient Cast-native provisioning', () => {
     }));
   });
 
+  it.each(['to', 'cc', 'bcc'] as const)('blocks external %s before uploading when delivery is disabled', async (field) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+        list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/get', {
+        list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Account/query', { ids: ['account-1'] }))
+      .mockResolvedValueOnce(registryResponse('x:Account/get', {
+        list: [{
+          id: 'account-1',
+          memberTenantId: 'tenant-1',
+          aliases: {
+            '0': { enabled: true, name: 'sales', domainId: 'domain-1' },
+          },
+        }],
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }));
+    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+    await expect(client.sendCastMailbox({
+      workspaceId: input.workspaceId, agentId: input.agentId,
+      from: { address: 'sales@wsp-a1b2c3d4.agents.openagent.md' },
+      to: [], cc: [], bcc: [], [field]: ['recipient@delivery-disabled.invalid'],
+      subject: 'Blocked external delivery', text: 'Must never upload or enqueue',
+      messageId: '<disabled@wsp-a1b2c3d4.agents.openagent.md>',
+      references: [], attachments: [],
+    })).rejects.toThrow('External email sending is disabled');
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
   it('uploads, imports and submits outbound mail as the tenant-bound account', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session)))
@@ -605,7 +642,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       .mockResolvedValueOnce(registryResponse('EmailSubmission/set', {
         created: { outbound: { id: 'submission-1' } },
       }));
-    const client = new StalwartClient(config, fetchMock as unknown as typeof fetch);
+    const client = new StalwartClient({ ...config, mailPublicDeliveryConfigured: true }, fetchMock as unknown as typeof fetch);
 
     await expect(client.sendCastMailbox({
       workspaceId: input.workspaceId,

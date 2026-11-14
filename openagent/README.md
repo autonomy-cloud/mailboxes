@@ -82,6 +82,13 @@ configuration is exact, the public TXT record matches, and an operator sets
 `MAIL_PUBLIC_DELIVERY_CONFIGURED=true` after an external delivery probe confirms
 the received `DKIM-Signature` uses `d=<OPENAGENT_MAIL_DOMAIN>; s=cast1`.
 
+With `MAIL_PUBLIC_DELIVERY_CONFIGURED=false` (the default), native agent
+submission permits only recipient domains registered in Stalwart. Any external
+To, Cc or Bcc recipient rejects the entire request with HTTP 403 and
+`external_delivery_disabled`, before upload or submission. Internal mail and
+mailbox/alias provisioning remain available. Keep this flag false during the
+domain-only rollout; the hosted mail policy also denies external SMTP egress.
+
 Calendar event projection uses the same bearer token and tenant-bound mailbox:
 
 ```http
@@ -141,3 +148,30 @@ monitoring, and secret-manager delivery of the recovery credential.
 
 The digest-pinned Kubernetes packaging and rollout procedure live in
 `deploy/openagent-mailboxes` and `docs/openagent/production.md`.
+
+## Workspace domain aliases
+
+The default Agent mail namespace is `agents.visca.ai`. Cast's existing workspace
+subdomain produces addresses such as `sales@software-factory.agents.visca.ai`.
+Cast remains the domain ownership and address authority. The gateway accepts
+additional alias domains only on the private Cast service-token endpoint, creates
+them under the same workspace tenant, and rejects adoption of another tenant's
+domain. An existing account retains its permanent ID-based primary address and
+mailbox contents across default-domain and display-name changes. Account updates
+retain historical aliases. Never use `LEGACY_AGENT_MAIL_DOMAINS` to retain domains:
+it authorizes deletion and must be empty during this additive migration.
+
+`POST /v1/cast/mail-domains/ensure` prepares a tenant-owned custom mail domain and
+returns its real MX, DKIM and DMARC records. DKIM key generation is asynchronous;
+Cast keeps readiness off until the returned key is published. Custom domains
+use their own signing keys, while platform subdomains share the corresponding
+parent signer. `send` optionally accepts the preserved `permanentAddress`, so
+changing the default base cannot redirect an existing mailbox. The gateway still
+verifies the sender is an enabled alias owned by that exact agent and tenant.
+
+Run `npm run test:cast-domains` in `openagent/gateway` with the local gateway
+and Stalwart URLs and their test credentials in the process environment. This
+acceptance runner rejects non-local endpoints and host ports outside 7xxx,
+sends only between synthetic mailboxes, tests old-primary preservation, alias
+provisioning, rename, tenant isolation, sender spoofing, custom-domain key
+setup and persisted delivery, and retires both mailboxes afterwards.
