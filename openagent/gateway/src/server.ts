@@ -13,15 +13,11 @@ import {
   isValidCastServiceToken,
 } from './cast-mailbox-api.js';
 import { loadConfig } from './config.js';
-import { OpenAgentTokenVerifier } from './openagent-token-verifier.js';
 import { initializeStalwart } from './startup.js';
 import { ExternalMailDisabledError, StalwartClient } from './stalwart-client.js';
 import { telemetryAccountId } from './telemetry.js';
 
 const config = loadConfig();
-const verifier = config.identityIssuer && config.identityJwksUrl
-  ? new OpenAgentTokenVerifier(config)
-  : undefined;
 const stalwart = new StalwartClient(config);
 
 const server = createServer(async (request, response) => {
@@ -238,56 +234,6 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     json(response, 200, { externalId });
     return;
   }
-  if (request.method === 'POST' && url.pathname === '/v1/mailboxes/ensure') {
-    if (!verifier) {
-      json(response, 503, {
-        error: 'service_not_configured',
-        message: 'Legacy identity-backed mailbox provisioning is not configured',
-      });
-      return;
-    }
-    const token = bearerToken(request);
-    if (!token) {
-      json(response, 401, { error: 'invalid_token', message: 'Bearer token required' });
-      return;
-    }
-
-    let identity;
-    try {
-      identity = await verifier.verify(token);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Invalid token';
-      json(response, 401, { error: 'invalid_token', message });
-      return;
-    }
-
-    const mailbox = await stalwart.ensureMailbox(identity.agentEmail, identity.agentName);
-    await stalwart.ensureBearerAccess(token);
-    console.info(JSON.stringify({
-      level: 'info',
-      event: 'mailbox.ensure',
-      agentId: identity.agentId,
-      address: identity.agentEmail,
-      created: mailbox.created,
-      tokenId: identity.tokenId,
-    }));
-    json(response, mailbox.created ? 201 : 200, {
-      ...mailbox,
-      jmapSessionUrl: `${config.stalwartPublicUrl}/.well-known/jmap`,
-      smtpSubmission: {
-        host: config.stalwartMailHost,
-        port: config.stalwartSmtpSubmissionPort,
-        tls: 'implicit',
-      },
-      imap: {
-        host: config.stalwartMailHost,
-        port: config.stalwartImapPort,
-        tls: 'implicit',
-      },
-    });
-    return;
-  }
-
   json(response, 404, { error: 'not_found' });
 }
 
@@ -410,17 +356,12 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(JSON.stringify(body));
 }
 
-if (
-  config.stalwartAutoBootstrap ||
-  config.stalwartConfigureOpenAgentOidc ||
-  config.stalwartConfigureCastMail
-) {
+if (config.stalwartAutoBootstrap || config.stalwartConfigureCastMail) {
   const startup = await initializeStalwart({
     bootstrapIfNeeded: () => config.stalwartAutoBootstrap
       ? stalwart.bootstrapIfNeeded()
       : Promise.resolve(false),
-    ensureOpenAgentOidc: async () => {
-      if (config.stalwartConfigureOpenAgentOidc) await stalwart.ensureOpenAgentOidc();
+    ensureConfiguration: async () => {
       if (config.stalwartConfigureCastMail) await stalwart.ensureCastMailConfiguration();
     },
   }, {
@@ -442,14 +383,6 @@ if (
       domain: config.mailDomain,
     }));
   }
-  if (config.stalwartConfigureOpenAgentOidc) {
-    console.info(JSON.stringify({
-      level: 'info',
-      event: 'stalwart.oidc_configured',
-      issuer: config.identityIssuer,
-      audience: config.mailAudience,
-    }));
-  }
   if (config.stalwartConfigureCastMail) {
     console.info(JSON.stringify({
       level: 'info',
@@ -460,16 +393,10 @@ if (
   }
 }
 
-if (config.bootstrapOnly) {
-  console.info(JSON.stringify({ level: 'info', event: 'bootstrap.completed' }));
-  process.exit(0);
-}
-
 server.listen(config.port, '0.0.0.0', () => {
   console.info(JSON.stringify({
     level: 'info',
     event: 'gateway.started',
     port: config.port,
-    legacyIdentityConfigured: Boolean(verifier),
   }));
 });

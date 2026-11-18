@@ -8,13 +8,13 @@ describe('initializeStalwart', () => {
       .mockResolvedValueOnce(true)
       .mockRejectedValueOnce(new Error('primaryKeyViolation'))
       .mockResolvedValueOnce(false);
-    const ensureOpenAgentOidc = vi.fn()
+    const ensureConfiguration = vi.fn()
       .mockRejectedValueOnce(new Error('bootstrap mode'))
       .mockResolvedValueOnce(undefined);
     const sleep = vi.fn().mockResolvedValue(undefined);
 
     await expect(initializeStalwart(
-      { bootstrapIfNeeded, ensureOpenAgentOidc },
+      { bootstrapIfNeeded, ensureConfiguration },
       { attempts: 4, delayMs: 1, sleep },
     )).resolves.toEqual({ bootstrapped: true, attempts: 3 });
     expect(sleep).toHaveBeenCalledTimes(2);
@@ -24,7 +24,7 @@ describe('initializeStalwart', () => {
     const error = new Error('unavailable');
     const client = {
       bootstrapIfNeeded: vi.fn().mockRejectedValue(error),
-      ensureOpenAgentOidc: vi.fn(),
+      ensureConfiguration: vi.fn(),
     };
 
     await expect(initializeStalwart(client, {
@@ -33,6 +33,6 @@ describe('initializeStalwart', () => {
       sleep: vi.fn().mockResolvedValue(undefined),
     })).rejects.toBe(error);
     expect(client.bootstrapIfNeeded).toHaveBeenCalledTimes(2);
-    expect(client.ensureOpenAgentOidc).not.toHaveBeenCalled();
+    expect(client.ensureConfiguration).not.toHaveBeenCalled();
   });
 });

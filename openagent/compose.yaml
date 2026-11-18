@@ -26,19 +26,6 @@ services:
       retries: 30
       start_period: 10s
 
-  identity-loopback:
-    image: alpine/socat:1.8.0.3
-    restart: unless-stopped
-    network_mode: service:stalwart
-    depends_on:
-      stalwart:
-        condition: service_started
-    command:
-      - -d
-      - -d
-      - TCP-LISTEN:6201,bind=127.0.0.1,fork,reuseaddr
-      - TCP:host.docker.internal:6201
-
   gateway:
     build:
       context: ./gateway
@@ -46,16 +33,10 @@ services:
     depends_on:
       stalwart:
         condition: service_healthy
-      identity-loopback:
-        condition: service_started
     environment:
       PORT: "6402"
-      OPENAGENT_IDENTITY_ISSUER: ${OPENAGENT_IDENTITY_ISSUER:-http://127.0.0.1:6201/oidc}
-      OPENAGENT_IDENTITY_JWKS_URL: ${OPENAGENT_IDENTITY_JWKS_URL:-http://host.docker.internal:6201/oidc/jwks}
-      OPENAGENT_MAIL_AUDIENCE: ${OPENAGENT_MAIL_AUDIENCE:-https://mail.openagent.md}
       OPENAGENT_MAIL_DOMAIN: ${OPENAGENT_MAIL_DOMAIN:-agents.visca.ai}
       LEGACY_AGENT_MAIL_DOMAINS: ${LEGACY_AGENT_MAIL_DOMAINS:-}
-      OPENAGENT_REQUIRED_SCOPES: ${OPENAGENT_REQUIRED_SCOPES:-mail:read}
       CAST_MAILBOX_GATEWAY_TOKEN: ${CAST_MAILBOX_GATEWAY_TOKEN:-local-cast-mailbox-gateway-token-change-me}
       CAST_DKIM_SELECTOR: ${CAST_DKIM_SELECTOR:-cast1}
       MAIL_PUBLIC_DELIVERY_CONFIGURED: ${MAIL_PUBLIC_DELIVERY_CONFIGURED:-false}
@@ -66,10 +47,9 @@ services:
       STALWART_IMAP_PORT: "6493"
       STALWART_ADMIN_USERNAME: ${STALWART_ADMIN_USERNAME:-admin}
       STALWART_ADMIN_PASSWORD: ${STALWART_ADMIN_PASSWORD:?set STALWART_ADMIN_PASSWORD}
-      STALWART_SERVER_HOSTNAME: ${STALWART_SERVER_HOSTNAME:-mail.openagent.md}
+      STALWART_SERVER_HOSTNAME: ${STALWART_SERVER_HOSTNAME:-mail.localhost}
       STALWART_REQUEST_TLS_CERTIFICATE: "false"
       STALWART_AUTO_BOOTSTRAP: ${STALWART_AUTO_BOOTSTRAP:-true}
-      STALWART_CONFIGURE_OPENAGENT_OIDC: ${STALWART_CONFIGURE_OPENAGENT_OIDC:-true}
       STALWART_CONFIGURE_CAST_MAIL: ${STALWART_CONFIGURE_CAST_MAIL:-true}
     ports:
       - "6402:6402"

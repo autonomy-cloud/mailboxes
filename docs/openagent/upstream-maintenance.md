@@ -9,8 +9,9 @@ For an upstream update:
 2. Materialize that upstream tree in a temporary checkout, never on `develop`, `stage`, or `release`.
 3. Review the snapshot diff against the current OpenAgent tree, including license notices,
    migrations, storage compatibility, protocols, and security advisories.
-4. Port the approved diff onto a feature branch and run the OpenAgent gateway, manifest, live JMAP,
-   SMTP, calendar, contact, file, isolation, backup, and restore gates.
+4. Port the approved diff onto a feature branch and run the gateway tests and the local
+   Cast-domain acceptance (`npm run test:cast-domains`), then check contact, file, isolation, backup,
+   and restore behaviour against a local stack.
 5. Squash the reviewed update into `develop`, then promote through `stage` and `release` with merge
    commits. Release must reuse the stage-built image digests.
 
