@@ -9,6 +9,5 @@ images: `mailboxes-stalwart` and `openagent-mailbox-gateway`.
 - `release` verifies that its merge commit contains the exact stage tree and retags both stage images
   without rebuilding them.
 
-Cluster deployment starts only after LatticeRuntime has Identity and Mailboxes overlays that pin both
-digests and reference production secrets. Public MX and external delivery are later launch gates;
-local persistent JMAP/SMTP/calendar/contact/file behavior can be verified before DNS cutover.
+Cluster deployment is owned by the infrastructure repository, which pins both digests and references
+production secrets. External delivery is a separate launch gate and stays off by default.

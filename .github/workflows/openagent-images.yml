@@ -21,7 +21,6 @@ on:
       - crates/**
       - resources/**
       - openagent/**
-      - deploy/openagent-mailboxes/**
   pull_request:
     branches: [develop, stage, release]
     paths:
@@ -32,7 +31,6 @@ on:
       - crates/**
       - resources/**
       - openagent/**
-      - deploy/openagent-mailboxes/**
   workflow_dispatch:
 
 concurrency:
@@ -51,7 +49,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-node@v6
         with: { node-version: 24 }
-      - run: bash deploy/openagent-mailboxes/verify-build-inputs.sh
+      - run: bash openagent/verify-build-inputs.sh
       - working-directory: openagent/gateway
         run: npm ci
       - working-directory: openagent/gateway

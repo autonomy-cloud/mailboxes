@@ -20,32 +20,14 @@ docker compose --env-file openagent/.env \
 
 The gateway health endpoints are `/health/live` and `/health/ready`.
 
-For local tenant routing, Identity must use
-`ENDPOINT=http://127.0.0.1:6201` for the default tenant and
-`ADMIN_ENDPOINT=http://localhost:6201` for the admin tenant. This ensures the
-issuer's discovery document and JWKS expose the same signing key used for agent
-tokens.
-
 The Stalwart image is built from this fork with the AGPL feature set. The first
 build compiles the Rust server and storage backends and can take a while on a
 small machine; later builds use the Docker cache.
 
 ## Gateway API
 
-The legacy endpoint remains available and requires an OpenAgent Identity bearer
-token for audience `https://mail.openagent.md`.
-
-```http
-POST /v1/mailboxes/ensure
-Authorization: Bearer <agent-mail-token>
-```
-
-The response contains only the calling agent's address, Stalwart account ID,
-and protocol discovery URLs. The same bearer token is then used directly with
-Stalwart JMAP.
-
-Cast-native endpoints use a separate service bearer token configured through
-`CAST_MAILBOX_GATEWAY_TOKEN` (minimum 32 characters):
+Every mailbox endpoint is private to Cast and requires the service bearer
+token configured through `CAST_MAILBOX_GATEWAY_TOKEN` (minimum 32 characters):
 
 ```http
 POST /v1/cast/mailboxes/ensure
@@ -57,7 +39,7 @@ Content-Type: application/json
 
 `ensure` accepts `workspaceId`, `agentId`, `displayName`, `permanentAddress`,
 and `aliases`. It derives and validates the canonical address
-`agt-<agent-id>@wsp-<workspace-id>.agents.openagent.md`, then idempotently
+`agt-<agent-id>@wsp-<workspace-id>.<OPENAGENT_MAIL_DOMAIN>`, then idempotently
 creates the workspace tenant, tenant-owned domain, and tenant-owned mailbox.
 `LEGACY_AGENT_MAIL_DOMAINS` is an empty-by-default comma/space separated cleanup
 allowlist. After the replacement mailbox is fully ensured, the gateway removes
@@ -122,22 +104,6 @@ optional `agent-mail-message-id` headers. The full email ID is emitted by this f
 mail-ingest telemetry event; the gateway and mail-server image must therefore
 be promoted together.
 
-## Real live verification
-
-With Identity running on port 6201 and the mailbox stack healthy, provide a
-default-tenant Management API token and run:
-
-```bash
-cd openagent/gateway
-OPENAGENT_LIVE_MANAGEMENT_TOKEN='<management-api-token>' npm run test:live
-```
-
-The script creates two temporary agents with distinct Ed25519 credentials and
-verifies provisioning, JMAP discovery, a persisted calendar event, a persisted
-contact card, uploaded and read-back file content, cross-account isolation,
-SMTP OAUTHBEARER authentication, and inbox delivery. A successful run ends with
-`"result":"pass"`. It does not use mock identities or mock mail.
-
 ## Production boundary
 
 The Compose stack is a complete local protocol integration, not an
@@ -146,8 +112,9 @@ DNS and MX, SPF, DKIM, DMARC, MTA-STS/TLS-RPT, trusted TLS certificates,
 durable object/database storage, backups with restore tests, rate limits,
 monitoring, and secret-manager delivery of the recovery credential.
 
-The digest-pinned Kubernetes packaging and rollout procedure live in
-`deploy/openagent-mailboxes` and `docs/openagent/production.md`.
+Deployment manifests live in the infrastructure repository, which pins both
+images by digest. `STALWART_SERVER_HOSTNAME` is used only by the one-time
+bootstrap and defaults to `STALWART_MAIL_HOST`.
 
 ## Workspace domain aliases
 

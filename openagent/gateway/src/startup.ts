@@ -1,6 +1,6 @@
 export type StalwartStartupClient = {
   bootstrapIfNeeded(): Promise<boolean>;
-  ensureOpenAgentOidc(): Promise<void>;
+  ensureConfiguration(): Promise<void>;
 };
 
 export type StalwartStartupResult = {
@@ -29,7 +29,7 @@ export async function initializeStalwart(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       bootstrapped = (await client.bootstrapIfNeeded()) || bootstrapped;
-      await client.ensureOpenAgentOidc();
+      await client.ensureConfiguration();
       return { bootstrapped, attempts: attempt };
     } catch (error) {
       lastError = error;
