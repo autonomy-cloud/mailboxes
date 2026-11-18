@@ -21,6 +21,48 @@ describe('gateway configuration', () => {
     expect(config.stalwartConfigureCastMail).toBe(false);
   });
 
+  it('admits no external recipient unless a deployment names some', () => {
+    const config = loadConfig(castNativeEnvironment);
+    expect(config.mailPublicDeliveryConfigured).toBe(false);
+    expect(config.externalRecipientPolicy).toBe('allowlist');
+    expect(config.externalRecipientAllowlist.addresses.size).toBe(0);
+    expect(config.externalRecipientAllowlist.domains.size).toBe(0);
+  });
+
+  it('reads allowed external addresses and exact domains', () => {
+    const config = loadConfig({
+      ...castNativeEnvironment,
+      MAIL_EXTERNAL_RECIPIENT_ALLOWLIST: 'Owner@Example.com, @Partner.Example  second@example.org',
+    });
+    expect([...config.externalRecipientAllowlist.addresses]).toEqual([
+      'owner@example.com',
+      'second@example.org',
+    ]);
+    expect([...config.externalRecipientAllowlist.domains]).toEqual(['partner.example']);
+  });
+
+  it.each([
+    'example.com',
+    '*@example.com',
+    '@*.example.com',
+    'name@',
+    'two@signs@example.com',
+    'name@localhost',
+    '*',
+  ])('refuses to start with the allowlist entry %s', (entry) => {
+    expect(() => loadConfig({
+      ...castNativeEnvironment,
+      MAIL_EXTERNAL_RECIPIENT_ALLOWLIST: entry,
+    })).toThrow('MAIL_EXTERNAL_RECIPIENT_ALLOWLIST');
+  });
+
+  it('refuses an unknown external recipient policy', () => {
+    expect(() => loadConfig({
+      ...castNativeEnvironment,
+      MAIL_EXTERNAL_RECIPIENT_POLICY: 'everyone',
+    })).toThrow();
+  });
+
   it('ignores every retired Identity setting, whatever its value', () => {
     const expected = loadConfig(castNativeEnvironment);
     // What deployed ConfigMaps still carry.

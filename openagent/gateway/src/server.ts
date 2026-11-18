@@ -14,7 +14,7 @@ import {
 } from './cast-mailbox-api.js';
 import { loadConfig } from './config.js';
 import { initializeStalwart } from './startup.js';
-import { ExternalMailDisabledError, StalwartClient } from './stalwart-client.js';
+import { ExternalMailRefusedError, StalwartClient } from './stalwart-client.js';
 import { telemetryAccountId } from './telemetry.js';
 
 const config = loadConfig();
@@ -25,12 +25,19 @@ const server = createServer(async (request, response) => {
     await route(request, response);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    const externalMailDisabled = error instanceof ExternalMailDisabledError;
-    const status = externalMailDisabled ? 403 : error instanceof ClientRequestError ? error.status : 500;
-    console.error(JSON.stringify({ level: status >= 500 ? 'error' : 'warn', message, path: request.url }));
+    const refusal = error instanceof ExternalMailRefusedError ? error : undefined;
+    const status = refusal ? 403 : error instanceof ClientRequestError ? error.status : 500;
+    // A refusal logs its code and how many recipients it named, never the addresses.
+    console.error(JSON.stringify({
+      level: status >= 500 ? 'error' : 'warn',
+      message,
+      path: request.url,
+      ...(refusal ? { code: refusal.code, refusedRecipientCount: refusal.recipients.length } : {}),
+    }));
     json(response, status, {
-      error: externalMailDisabled ? 'external_delivery_disabled' : status >= 500 ? 'internal_error' : 'invalid_request',
+      error: refusal ? refusal.code : status >= 500 ? 'internal_error' : 'invalid_request',
       message: status >= 500 ? 'Mailbox operation failed' : message,
+      ...(refusal && refusal.recipients.length > 0 ? { recipients: refusal.recipients } : {}),
     });
   }
 });
@@ -148,6 +155,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       emailId: sent.emailId,
       submissionId: sent.submissionId,
       messageId: sent.messageId,
+      externalRecipientCount: sent.externalRecipientCount,
     }));
     json(response, 202, sent);
     return;

@@ -71,6 +71,29 @@ To, Cc or Bcc recipient rejects the entire request with HTTP 403 and
 mailbox/alias provisioning remain available. Keep this flag false during the
 domain-only rollout; the hosted mail policy also denies external SMTP egress.
 
+Turning the flag on does not open sending by itself. A message with an external
+recipient is still refused whole, with HTTP 403 and before upload or
+submission, unless it passes every check below. Messages with only local
+recipients are never affected.
+
+| Check | Setting | Refusal code |
+|---|---|---|
+| The sender is a platform address, at `OPENAGENT_MAIL_DOMAIN` or under it. A workspace-owned sender domain is not a sending domain at the relay. | none | `external_sender_not_allowed` |
+| At most 50 recipients on the message, the relay's limit. | none | `external_recipient_limit_exceeded` |
+| Every external recipient is on the allowed list. | `MAIL_EXTERNAL_RECIPIENT_ALLOWLIST`, `MAIL_EXTERNAL_RECIPIENT_POLICY` | `external_recipient_not_allowed` |
+
+`MAIL_EXTERNAL_RECIPIENT_ALLOWLIST` holds entries separated by spaces or commas:
+`name@example.com` for one address, `@example.com` for every address at exactly
+that domain. There is no wildcard and a subdomain is a different domain. The
+default is empty, which admits nobody. `MAIL_EXTERNAL_RECIPIENT_POLICY=open`
+removes the list check; the default is `allowlist`. An invalid entry stops the
+gateway from starting.
+
+The 403 body carries the code in `error`, a sentence in `message` and, for
+`external_recipient_not_allowed`, the refused addresses in `recipients`. The
+gateway logs the code and the number of refused recipients, never the
+addresses. A successful send logs `externalRecipientCount`.
+
 Calendar event projection uses the same bearer token and tenant-bound mailbox:
 
 ```http

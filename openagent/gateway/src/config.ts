@@ -9,6 +9,10 @@ const environmentSchema = z.object({
   CAST_MAILBOX_GATEWAY_TOKEN: z.string().min(32).optional(),
   CAST_DKIM_SELECTOR: z.string().trim().regex(/^[a-z0-9][a-z0-9._-]{0,62}$/iu).default('cast1'),
   MAIL_PUBLIC_DELIVERY_CONFIGURED: z.enum(['true', 'false']).default('false'),
+  // Who may be written to outside this mail server once public delivery is on.
+  // The default admits nobody: an empty allowlist under the allowlist policy.
+  MAIL_EXTERNAL_RECIPIENT_POLICY: z.enum(['allowlist', 'open']).default('allowlist'),
+  MAIL_EXTERNAL_RECIPIENT_ALLOWLIST: z.string().default(''),
   CAST_AGENT_MAIL_WEBHOOK_URL: url.optional(),
   CAST_MAILBOX_WEBHOOK_SECRET: z.string().min(32).optional(),
   MAIL_TELEMETRY_WEBHOOK_SECRET: z.string().min(32).optional(),
@@ -28,6 +32,11 @@ const environmentSchema = z.object({
   STALWART_CONFIGURE_CAST_MAIL: z.enum(['true', 'false']).default('false'),
 });
 
+export type ExternalRecipientAllowlist = {
+  addresses: ReadonlySet<string>;
+  domains: ReadonlySet<string>;
+};
+
 export type GatewayConfig = {
   port: number;
   mailDomain: string;
@@ -35,6 +44,8 @@ export type GatewayConfig = {
   castMailboxGatewayToken?: string;
   castDkimSelector: string;
   mailPublicDeliveryConfigured: boolean;
+  externalRecipientPolicy: 'allowlist' | 'open';
+  externalRecipientAllowlist: ExternalRecipientAllowlist;
   castAgentMailWebhookUrl?: string;
   castMailboxWebhookSecret?: string;
   mailTelemetryWebhookSecret?: string;
@@ -73,6 +84,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Gatewa
       : {}),
     castDkimSelector: parsed.CAST_DKIM_SELECTOR.toLowerCase(),
     mailPublicDeliveryConfigured: parsed.MAIL_PUBLIC_DELIVERY_CONFIGURED === 'true',
+    externalRecipientPolicy: parsed.MAIL_EXTERNAL_RECIPIENT_POLICY,
+    externalRecipientAllowlist: parseExternalRecipientAllowlist(parsed.MAIL_EXTERNAL_RECIPIENT_ALLOWLIST),
     ...(parsed.CAST_AGENT_MAIL_WEBHOOK_URL
       ? { castAgentMailWebhookUrl: parsed.CAST_AGENT_MAIL_WEBHOOK_URL }
       : {}),
@@ -95,6 +108,30 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Gatewa
     stalwartAutoBootstrap: parsed.STALWART_AUTO_BOOTSTRAP === 'true',
     stalwartConfigureCastMail: parsed.STALWART_CONFIGURE_CAST_MAIL === 'true',
   };
+}
+
+// Entries are separated by spaces or commas. `name@example.com` admits one
+// address; `@example.com` admits every address at exactly that domain (not its
+// subdomains). There is no wildcard. Anything else stops the gateway from starting.
+export function parseExternalRecipientAllowlist(value: string): ExternalRecipientAllowlist {
+  const addresses = new Set<string>();
+  const domains = new Set<string>();
+  for (const entry of value.split(/[ ,]+/u).filter(Boolean)) {
+    const separator = entry.lastIndexOf('@');
+    if (separator < 0) {
+      throw new Error('MAIL_EXTERNAL_RECIPIENT_ALLOWLIST entries must be name@domain or @domain');
+    }
+    const localPart = entry.slice(0, separator);
+    const domain = validMailDomain(entry.slice(separator + 1), 'MAIL_EXTERNAL_RECIPIENT_ALLOWLIST');
+    if (!localPart) {
+      domains.add(domain);
+    } else if (/^[^\s@<>(),;:"\\[\]*]{1,64}$/u.test(localPart)) {
+      addresses.add(`${localPart.toLowerCase()}@${domain}`);
+    } else {
+      throw new Error('MAIL_EXTERNAL_RECIPIENT_ALLOWLIST contains an invalid address');
+    }
+  }
+  return { addresses, domains };
 }
 
 function validMailDomain(value: string, environmentName: string): string {

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { GatewayConfig } from './config.js';
-import { StalwartClient } from './stalwart-client.js';
+import { parseExternalRecipientAllowlist } from './config.js';
+import { ExternalMailRefusedError, StalwartClient } from './stalwart-client.js';
 
 const config: GatewayConfig = {
   port: 6402,
@@ -9,6 +10,8 @@ const config: GatewayConfig = {
   legacyAgentMailDomains: [],
   castDkimSelector: 'cast1',
   mailPublicDeliveryConfigured: false,
+  externalRecipientPolicy: 'allowlist',
+  externalRecipientAllowlist: { addresses: new Set(), domains: new Set() },
   mailTelemetryWebhookConfigured: false,
   stalwartBaseUrl: 'http://stalwart:8080',
   stalwartPublicUrl: 'https://inbox.openagent.md',
@@ -577,7 +580,139 @@ describe('StalwartClient Cast-native provisioning', () => {
       subject: 'Blocked external delivery', text: 'Must never upload or enqueue',
       messageId: '<disabled@wsp-a1b2c3d4.agents.openagent.md>',
       references: [], attachments: [],
-    })).rejects.toThrow('External email sending is disabled');
+    })).rejects.toMatchObject({
+      code: 'external_delivery_disabled',
+      message: expect.stringContaining('External email sending is disabled'),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  // Everything a send reads before it decides on external recipients.
+  const sendPreamble = (aliases: Record<string, unknown> = {
+    '0': { enabled: true, name: 'sales', domainId: 'domain-1' },
+  }) => vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify(session)))
+    .mockResolvedValueOnce(registryResponse('x:Tenant/query', { ids: ['tenant-1'] }))
+    .mockResolvedValueOnce(registryResponse('x:Tenant/get', {
+      list: [{ id: 'tenant-1', name: 'cast-workspace:a1b2-c3d4' }],
+    }))
+    .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-1'] }))
+    .mockResolvedValueOnce(registryResponse('x:Domain/get', {
+      list: [{ id: 'domain-1', memberTenantId: 'tenant-1' }],
+    }))
+    .mockResolvedValueOnce(registryResponse('x:Account/query', { ids: ['account-1'] }))
+    .mockResolvedValueOnce(registryResponse('x:Account/get', {
+      list: [{ id: 'account-1', memberTenantId: 'tenant-1', aliases }],
+    }));
+  const externalSend = (overrides: Record<string, unknown> = {}) => ({
+    workspaceId: input.workspaceId, agentId: input.agentId,
+    from: { address: 'sales@wsp-a1b2c3d4.agents.openagent.md' },
+    to: ['buyer@example.com'], cc: [], bcc: [],
+    subject: 'Refused external delivery', text: 'Must never upload or enqueue',
+    messageId: '<refused@wsp-a1b2c3d4.agents.openagent.md>',
+    references: [], attachments: [],
+    ...overrides,
+  });
+  const deliveryOn = (allowlist = '') => ({
+    ...config,
+    mailPublicDeliveryConfigured: true,
+    externalRecipientAllowlist: parseExternalRecipientAllowlist(allowlist),
+  });
+
+  it('admits no external recipient by default once delivery is on', async () => {
+    const fetchMock = sendPreamble()
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }));
+    const client = new StalwartClient(deliveryOn(), fetchMock as unknown as typeof fetch);
+
+    const refusal = await client.sendCastMailbox(externalSend()).catch((error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(ExternalMailRefusedError);
+    expect(refusal).toMatchObject({
+      code: 'external_recipient_not_allowed',
+      recipients: ['buyer@example.com'],
+    });
+    // Nothing after the recipient lookup: no identity read, upload, import or submission.
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('refuses the whole message when one external recipient is off the allowed list', async () => {
+    const fetchMock = sendPreamble()
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }));
+    const client = new StalwartClient(
+      deliveryOn('Buyer@Example.com @partner.example'),
+      fetchMock as unknown as typeof fetch,
+    );
+
+    await expect(client.sendCastMailbox(externalSend({
+      to: ['BUYER@example.com', 'other@example.com'],
+      cc: ['anyone@partner.example'],
+      bcc: ['someone@sub.partner.example'],
+    }))).rejects.toMatchObject({
+      code: 'external_recipient_not_allowed',
+      recipients: ['other@example.com', 'someone@sub.partner.example'],
+    });
+    // example.com, partner.example and sub.partner.example are each looked up once.
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+
+  it('sends to allowed external recipients and counts them', async () => {
+    const fetchMock = sendPreamble()
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: ['domain-9'] }))
+      .mockResolvedValueOnce(registryResponse('Identity/get', {
+        list: [{ id: 'identity-1', email: 'sales@wsp-a1b2c3d4.agents.openagent.md' }],
+      }))
+      .mockResolvedValueOnce(registryResponse('Mailbox/query', { ids: ['drafts-1'] }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ blobId: 'blob-1' })))
+      .mockResolvedValueOnce(registryResponse('Email/import', {
+        created: { outbound: { id: 'email-1' } },
+      }))
+      .mockResolvedValueOnce(registryResponse('EmailSubmission/set', {
+        created: { outbound: { id: 'submission-1' } },
+      }));
+    const client = new StalwartClient(
+      deliveryOn('buyer@example.com'),
+      fetchMock as unknown as typeof fetch,
+    );
+
+    await expect(client.sendCastMailbox(externalSend({
+      cc: ['support@wsp-ffff0000.agents.openagent.md'],
+    }))).resolves.toMatchObject({ submissionId: 'submission-1', externalRecipientCount: 1 });
+  });
+
+  it('refuses an external send from a workspace-owned sender domain', async () => {
+    const fetchMock = sendPreamble({
+      '0': { enabled: true, name: 'sales', domainId: 'domain-1' },
+      '1': { enabled: true, name: 'sales', domainId: 'domain-2' },
+    })
+      .mockResolvedValueOnce(registryResponse('x:Domain/get', {
+        list: [{ id: 'domain-2', memberTenantId: 'tenant-1', name: 'agents.customer.example' }],
+      }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }));
+    const client = new StalwartClient(
+      { ...deliveryOn(), externalRecipientPolicy: 'open' },
+      fetchMock as unknown as typeof fetch,
+    );
+
+    await expect(client.sendCastMailbox(externalSend({
+      from: { address: 'sales@agents.customer.example' },
+    }))).rejects.toMatchObject({ code: 'external_sender_not_allowed', recipients: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(9);
+  });
+
+  it('refuses more recipients than the relay accepts on an external message', async () => {
+    const fetchMock = sendPreamble()
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }));
+    const client = new StalwartClient(
+      { ...deliveryOn(), externalRecipientPolicy: 'open' },
+      fetchMock as unknown as typeof fetch,
+    );
+
+    await expect(client.sendCastMailbox(externalSend({
+      to: Array.from({ length: 51 }, (_, index) => `buyer${index}@example.com`),
+    }))).rejects.toMatchObject({ code: 'external_recipient_limit_exceeded' });
     expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
@@ -602,6 +737,7 @@ describe('StalwartClient Cast-native provisioning', () => {
           },
         }],
       }))
+      .mockResolvedValueOnce(registryResponse('x:Domain/query', { ids: [] }))
       .mockResolvedValueOnce(registryResponse('Identity/get', {
         list: [{ id: 'identity-1', email: 'sales@wsp-a1b2c3d4.agents.openagent.md' }],
       }))
@@ -613,7 +749,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       .mockResolvedValueOnce(registryResponse('EmailSubmission/set', {
         created: { outbound: { id: 'submission-1' } },
       }));
-    const client = new StalwartClient({ ...config, mailPublicDeliveryConfigured: true }, fetchMock as unknown as typeof fetch);
+    const client = new StalwartClient({ ...config, mailPublicDeliveryConfigured: true, externalRecipientPolicy: 'open' }, fetchMock as unknown as typeof fetch);
 
     await expect(client.sendCastMailbox({
       workspaceId: input.workspaceId,
@@ -636,12 +772,13 @@ describe('StalwartClient Cast-native provisioning', () => {
       emailId: 'email-1',
       submissionId: 'submission-1',
       messageId: expect.stringMatching(/^<.+@wsp-a1b2c3d4\.agents\.openagent\.md>$/u),
+      externalRecipientCount: 2,
     });
 
-    expect(fetchMock.mock.calls[9]?.[0]).toBe(
+    expect(fetchMock.mock.calls[10]?.[0]).toBe(
       'http://stalwart:8080/jmap/upload/account-1',
     );
-    const upload = fetchMock.mock.calls[9]?.[1] as RequestInit;
+    const upload = fetchMock.mock.calls[10]?.[1] as RequestInit;
     expect(upload.headers).toEqual(expect.objectContaining({
       'Content-Type': 'message/rfc5322',
     }));
@@ -651,7 +788,7 @@ describe('StalwartClient Cast-native provisioning', () => {
     expect(raw).not.toContain('Bcc:');
     expect(raw).toContain("filename*=UTF-8''note.txt");
 
-    expect(requestBody(fetchMock, 10).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 11).methodCalls[0]).toEqual([
       'Email/import',
       expect.objectContaining({
         accountId: 'account-1',
@@ -665,7 +802,7 @@ describe('StalwartClient Cast-native provisioning', () => {
       }),
       'openagent',
     ]);
-    expect(requestBody(fetchMock, 11).methodCalls[0]).toEqual([
+    expect(requestBody(fetchMock, 12).methodCalls[0]).toEqual([
       'EmailSubmission/set',
       expect.objectContaining({
         accountId: 'account-1',

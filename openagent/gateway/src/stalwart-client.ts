@@ -71,6 +71,8 @@ export type SentCastMailboxMessage = {
   emailId: string;
   submissionId: string;
   messageId: string;
+  // How many recipients were outside this mail server (0 for internal mail).
+  externalRecipientCount: number;
 };
 
 export type InboundMailTelemetryEvent = {
@@ -98,12 +100,36 @@ export type CastDkimRecord = {
   dnsPublished: boolean;
 };
 
-export class ExternalMailDisabledError extends Error {
+export type ExternalMailRefusalCode =
+  | 'external_delivery_disabled'
+  | 'external_sender_not_allowed'
+  | 'external_recipient_limit_exceeded'
+  | 'external_recipient_not_allowed';
+
+// A send that names a recipient outside this mail server and is refused whole,
+// before anything is uploaded or queued. `recipients` lists the refused
+// addresses for the caller; it is never logged.
+export class ExternalMailRefusedError extends Error {
+  readonly code: ExternalMailRefusalCode;
+  readonly recipients: readonly string[];
+
+  constructor(code: ExternalMailRefusalCode, message: string, recipients: readonly string[] = []) {
+    super(message);
+    this.name = 'ExternalMailRefusedError';
+    this.code = code;
+    this.recipients = recipients;
+  }
+}
+
+export class ExternalMailDisabledError extends ExternalMailRefusedError {
   constructor() {
-    super('External email sending is disabled. Only local recipients are allowed.');
+    super('external_delivery_disabled', 'External email sending is disabled. Only local recipients are allowed.');
     this.name = 'ExternalMailDisabledError';
   }
 }
+
+// The relay accepts at most this many recipients on one message.
+export const MAX_EXTERNAL_MESSAGE_RECIPIENTS = 50;
 
 export class StalwartClient {
   readonly #config: GatewayConfig;
@@ -513,14 +539,51 @@ export class StalwartClient {
       throw new Error(`Sender ${input.from.address} is not an enabled alias of this Cast agent`);
     }
 
-    // Reject every external envelope recipient before uploading or queueing mail.
-    if (!this.#config.mailPublicDeliveryConfigured) {
-      const recipientDomains = new Set(
-        [...input.to, ...input.cc, ...input.bcc].map((address) => splitAddress(address.toLowerCase())[1]),
-      );
-      for (const recipientDomain of recipientDomains) {
-        if (!await this.#findDomain(session.apiUrl, adminAccountId, recipientDomain)) {
-          throw new ExternalMailDisabledError();
+    // Decide every external envelope recipient before uploading or queueing mail.
+    // A recipient is external when its domain is not registered in this mail server.
+    const recipients = [
+      ...new Set([...input.to, ...input.cc, ...input.bcc].map((email) => email.toLowerCase())),
+    ];
+    const localDomains = new Map<string, boolean>();
+    const externalRecipients: string[] = [];
+    for (const recipient of recipients) {
+      const recipientDomain = splitAddress(recipient)[1];
+      let local = localDomains.get(recipientDomain);
+      if (local === undefined) {
+        local = Boolean(await this.#findDomain(session.apiUrl, adminAccountId, recipientDomain));
+        localDomains.set(recipientDomain, local);
+      }
+      if (local) continue;
+      if (!this.#config.mailPublicDeliveryConfigured) throw new ExternalMailDisabledError();
+      externalRecipients.push(recipient);
+    }
+    if (externalRecipients.length > 0) {
+      // Only platform addresses are relayed. A workspace's own domain is not a
+      // sending domain at the relay, which would accept the message and bounce it.
+      const senderDomain = splitAddress(from)[1];
+      const platformDomain = this.#config.mailDomain;
+      if (senderDomain !== platformDomain && !senderDomain.endsWith(`.${platformDomain}`)) {
+        throw new ExternalMailRefusedError(
+          'external_sender_not_allowed',
+          `External email can only be sent from a ${platformDomain} address.`,
+        );
+      }
+      if (recipients.length > MAX_EXTERNAL_MESSAGE_RECIPIENTS) {
+        throw new ExternalMailRefusedError(
+          'external_recipient_limit_exceeded',
+          `A message with external recipients can have at most ${MAX_EXTERNAL_MESSAGE_RECIPIENTS} recipients.`,
+        );
+      }
+      if (this.#config.externalRecipientPolicy !== 'open') {
+        const allowlist = this.#config.externalRecipientAllowlist;
+        const refused = externalRecipients.filter((recipient) =>
+          !allowlist.addresses.has(recipient) && !allowlist.domains.has(splitAddress(recipient)[1]));
+        if (refused.length > 0) {
+          throw new ExternalMailRefusedError(
+            'external_recipient_not_allowed',
+            'An external recipient is not on the allowed list.',
+            refused,
+          );
         }
       }
     }
@@ -561,9 +624,6 @@ export class StalwartClient {
     );
     assertNoSetFailures(imported, 'Stalwart email import');
     const emailId = createdObjectId(imported, 'outbound', 'imported email id');
-    const recipients = [
-      ...new Set([...input.to, ...input.cc, ...input.bcc].map((email) => email.toLowerCase())),
-    ];
     const submitted = await this.#standardCall(
       session.apiUrl,
       adminAccountId,
@@ -589,6 +649,7 @@ export class StalwartClient {
       emailId,
       submissionId: createdObjectId(submitted, 'outbound', 'email submission id'),
       messageId: rawMessage.messageId,
+      externalRecipientCount: externalRecipients.length,
     };
   }
 
